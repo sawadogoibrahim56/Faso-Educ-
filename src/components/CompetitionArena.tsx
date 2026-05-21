@@ -1,0 +1,1663 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Trophy, 
+  Users, 
+  UserPlus, 
+  Settings, 
+  Play, 
+  Sparkles, 
+  Clock, 
+  Check, 
+  Volume2, 
+  VolumeX, 
+  Download, 
+  ArrowLeft, 
+  Loader2, 
+  Share2, 
+  User, 
+  Plus, 
+  X, 
+  ArrowRight,
+  MessageSquare,
+  Award,
+  Zap,
+  RotateCcw
+} from 'lucide-react';
+import { cn } from '../lib/utils';
+import { Question, Level, QuizSettings } from '../types';
+import { generateQuizQuestions } from '../services/geminiService';
+import { MathRenderer } from './MathRenderer';
+import { jsPDF } from 'jspdf';
+
+const ProgressBar = ({ progress, color = "bg-faso-blue" }: { progress: number, color?: string }) => (
+  <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
+    <motion.div 
+      className={cn("h-full rounded-full transition-all duration-300", color)}
+      initial={{ width: 0 }}
+      animate={{ width: `${progress}%` }}
+    />
+  </div>
+);
+
+// Simulated names of Burkinabè peers for realism
+const SIMULATED_NAMES = [
+  'Adama Ouédraogo',
+  'Fatoumata Barro',
+  'Inoussa Sawadogo',
+  'Mariam Diallo',
+  'Kader Traoré',
+  'Salif Sanou',
+  'Sita Coulibaly',
+  'Ousmane Kambou',
+  'Sonia Bamogo',
+  'Bernadette Somé',
+  'Seydou Zongo',
+  'Chantal Ilboudo',
+  'Fousseni Barry',
+  'Alassane Nacoulma',
+  'Yacouba Tall'
+];
+
+// Fun realistic phrases candidates say based on their correct or wrong answers
+const REACTION_PHRASES_CORRECT = [
+  "Ouf, l'équilibre de marché est validé !",
+  "Excellent ! La formule du multiplicateur est tellement logique.",
+  "Oui ! C'était bien la proposition correcte.",
+  "La dérivée première s'annule bien en ce point maximum.",
+  "C'est exactement la doctrine administrative !",
+  "Facile, j'avais révisé cette formule hier soir sur Faso Educ.",
+  "Génial ! Ça me fait de précieux points."
+];
+
+const REACTION_PHRASES_WRONG = [
+  "Mince, j'ai confondu la dérivée première et seconde...",
+  "Ah ! J'ai choisi l'option inverse par manque de temps.",
+  "Oups, j'ai lu trop vite la contrainte budgétaire.",
+  "Le temps file trop vite sous stress...",
+  "Je me suis fait avoir par le distracteur B !",
+  "Aïe, ce modèle de Solow mérite que je reprenne mes cours.",
+  "C'est rageant, l'erreur d'inadvertance est fatale."
+];
+
+interface Participant {
+  id: string;
+  name: string;
+  isAI: boolean;
+  score: number;
+  accuracy: number; // 0.4 to 0.85
+  speed: number;    // average seconds taken to answer
+  status: 'thinking' | 'answered' | 'waiting';
+  lastTimeTaken?: number;
+  lastSelectedOption?: number | null;
+  lastAnswerCorrect?: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  senderName: string;
+  isAI: boolean;
+  isUser: boolean;
+  text: string;
+  time: string;
+}
+
+interface CompetitionArenaProps {
+  onBack: () => void;
+  onSaveToHistory: (result: any) => void;
+  soundEnabled: boolean;
+}
+
+export const CompetitionArena: React.FC<CompetitionArenaProps> = ({ 
+  onBack, 
+  onSaveToHistory,
+  soundEnabled: initialSoundEnabled
+}) => {
+  // Stage: 'setup' | 'lobby' | 'active' | 'podium'
+  const [stage, setStage] = useState<'setup' | 'lobby' | 'active' | 'podium'>('setup');
+  
+  // Settings
+  const [subject, setSubject] = useState<string>("Microéconomie Moderne (Cobb-Douglas & Cournot)");
+  const [level, setLevel] = useState<Level>("Licence");
+  const [questionCount, setQuestionCount] = useState<number>(8);
+  const [timeLimit, setTimeLimit] = useState<number>(45); // seconds per question
+  const [aiCount, setAiCount] = useState<number>(5);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(initialSoundEnabled);
+  
+  // Human inviting
+  const [customInvitations, setCustomInvitations] = useState<string[]>([]);
+  const [newInviteName, setNewInviteName] = useState<string>("");
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [roomNumber] = useState<number>(() => Math.floor(Math.random() * 90000 + 10000));
+  
+  // Game Play State
+  const [loadingQuestions, setLoadingQuestions] = useState<boolean>(false);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
+  const [timeLeft, setLeftTime] = useState<number>(45);
+  const [userAnswer, setUserAnswer] = useState<number | null>(null);
+  const [userAnswers, setUserAnswers] = useState<(number | null)[]>([]);
+  const [showFeedback, setShowFeedback] = useState<boolean>(false);
+  const [feedbackTimeLeft, setFeedbackTimeLeft] = useState<number>(8);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+
+  // Live candidates list (User, Invited Humans, active IAs)
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  // Chat / commentary activity
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  
+  // Refs
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const responseTimersRef = useRef<number[]>([]);
+
+  // Setup options for subjects
+  const subjectSuggestions = [
+    { title: "Microéconomie (Optimisation, Cobb-Douglas, Coûts marginaux)", category: "Microéconomie" },
+    { title: "Macroéconomie (Multiplicateur keynésien, IS-LM, Modèle de Solow)", category: "Macroéconomie" },
+    { title: "Statistiques & Probabilités (Correction de Bessel, Intervalles de confiance)", category: "Statistiques" },
+    { title: "Politiques Publiques & Finances Nationales de l'UEMOA", category: "Économie du Développement" },
+    { title: "Mathématiques Générales & Algèbre Linéaire des Concours", category: "Mathématiques" }
+  ];
+
+  // Sound generator
+  const playSound = (type: 'correct' | 'wrong' | 'countdown' | 'finish') => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      if (type === 'correct') {
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.3);
+      } else if (type === 'wrong') {
+        osc.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
+        osc.frequency.setValueAtTime(147, audioCtx.currentTime + 0.1); // D3
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.4);
+      } else if (type === 'countdown') {
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime); 
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+      } else if (type === 'finish') {
+        osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+        osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+        osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+        osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime + 0.3); // C6
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.6);
+      }
+    } catch (e) {
+      console.warn("Audio Context blocked or unsupported:", e);
+    }
+  };
+
+  // Build the live dynamic lobby
+  const handleStartLobby = () => {
+    setStage('lobby');
+    
+    // Add User
+    const userPart: Participant = {
+      id: 'current-user',
+      name: 'Vous (Candidat)',
+      isAI: false,
+      score: 0,
+      accuracy: 1.0,
+      speed: 0,
+      status: 'waiting'
+    };
+
+    // Add AIs
+    const aiParts: Participant[] = [];
+    for (let i = 0; i < aiCount; i++) {
+      const idx = Math.floor(Math.random() * SIMULATED_NAMES.length);
+      const name = SIMULATED_NAMES[idx] + " (IA)";
+      // Remove to prevent exact duplicates in list
+      SIMULATED_NAMES.splice(idx, 1);
+      
+      aiParts.push({
+        id: `ai-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        name,
+        isAI: true,
+        score: 0,
+        accuracy: 0.5 + Math.random() * 0.35, // 50% to 85% accuracy
+        speed: 5 + Math.random() * 15,         // average seconds taken 5-20s
+        status: 'waiting'
+      });
+    }
+
+    // Refill simulated names list
+    SIMULATED_NAMES.push(
+      'Adama Ouédraogo', 'Fatoumata Barro', 'Inoussa Sawadogo', 'Mariam Diallo',
+      'Kader Traoré', 'Salif Sanou', 'Sita Coulibaly', 'Ousmane Kambou',
+      'Sonia Bamogo', 'Bernadette Somé', 'Seydou Zongo', 'Chantal Ilboudo'
+    );
+
+    // Add Invited Humans
+    const humanParts = customInvitations.map((name, i) => ({
+      id: `human-invite-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      name: `${name} (Invité)`,
+      isAI: false, // Simulated candidate mimicking human performance
+      score: 0,
+      accuracy: 0.6 + Math.random() * 0.25,
+      speed: 8 + Math.random() * 10,
+      status: 'waiting'
+    }));
+
+    setParticipants([userPart, ...aiParts, ...humanParts]);
+
+    // Add inaugural greeting chat
+    setChatMessages([
+      {
+        id: 'chat-init-1',
+        senderName: 'Système Faso Arena',
+        isAI: false,
+        isUser: false,
+        text: `Bienvenue dans la salle de concours en direct ! Sujet retenu: "${subject}". Préparation intensive de niveau ${level}.`,
+        time: 'Instant'
+      }
+    ]);
+  };
+
+  const handleAddInviteName = () => {
+    if (!newInviteName.trim()) return;
+    if (customInvitations.length >= 8) {
+      alert("La limite est de 8 candidats invités par session de test.");
+      return;
+    }
+    setCustomInvitations(prev => [...prev, newInviteName.trim()]);
+    setNewInviteName("");
+  };
+
+  const handleRemoveInvite = (idx: number) => {
+    setCustomInvitations(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const copySimulatedLink = () => {
+    setCopiedLink(true);
+    navigator.clipboard?.writeText?.(`https://ais-dev-fasoeduc.run.app/lobby/competition-${roomNumber}`);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  // Launch the live competition (generate questions & prepare game state)
+  const handleLaunchCompetition = async () => {
+    setLoadingQuestions(true);
+    try {
+      const qSettings: QuizSettings = {
+        level,
+        difficulty: 'Moyen',
+        questionCount,
+        timePerQuestion: timeLimit,
+        soundEnabled: soundEnabled
+      };
+      
+      const generated = await generateQuizQuestions([subject], qSettings);
+      
+      if (generated && generated.length > 0) {
+        setQuestions(generated);
+        setCurrentQuestionIndex(0);
+        setLeftTime(timeLimit);
+        setStage('active');
+        setUserAnswer(null);
+        setUserAnswers(new Array(generated.length).fill(null));
+        setShowFeedback(false);
+        setIsPaused(false);
+        
+        // Clear all response statuses
+        setParticipants(prev => prev.map(p => ({
+          ...p,
+          score: 0,
+          status: 'thinking',
+          lastSelectedOption: null,
+          lastAnswerCorrect: false
+        })));
+
+        // Greet in chat
+        setChatMessages(prev => [
+          ...prev,
+          {
+            id: `chat-start-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            senderName: 'Arbitre Faso Educ',
+            isAI: false,
+            isUser: false,
+            text: "🚨 Le concours commence ! Répondez le plus rapidement possible pour valider vos points. Concentration !",
+            time: '12:00'
+          }
+        ]);
+      } else {
+        alert("Nous n'avons pas pu charger d'équations pour ce concours. Veuillez changer de sujet ou réessayer.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Une erreur technique est survenue lors de l'intégration de l'IA.");
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
+
+  // Live Timer effect during questions
+  useEffect(() => {
+    if (stage !== 'active' || isPaused || showFeedback) return;
+
+    if (timeLeft <= 0) {
+      handleRevealAnswers();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setLeftTime(prev => {
+        const next = prev - 1;
+        if (next > 0 && next <= 5) {
+          playSound('countdown');
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [stage, isPaused, showFeedback, timeLeft, currentQuestionIndex]);
+
+  // Synchronized automatic reveal when all participants have answered
+  useEffect(() => {
+    if (stage !== 'active' || showFeedback || isPaused || participants.length === 0) return;
+
+    const allAnswered = participants.every(p => p.status === 'answered');
+    if (allAnswered) {
+      handleRevealAnswers();
+    }
+  }, [participants, stage, showFeedback, isPaused]);
+
+  // Automatic feedback transition to next question after 8 seconds
+  useEffect(() => {
+    if (!showFeedback || stage !== 'active' || isPaused) return;
+
+    if (feedbackTimeLeft <= 0) {
+      handleNextQuestion();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setFeedbackTimeLeft(prev => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [showFeedback, stage, isPaused, feedbackTimeLeft, currentQuestionIndex]);
+
+  // Handle simulated times for other participants (AIs & Invited peers) to answer
+  useEffect(() => {
+    if (stage !== 'active' || showFeedback || isPaused) return;
+
+    // Reset participant response timers
+    responseTimersRef.current = [];
+    
+    // Simulate each AI and simulated peer answering at a random delay
+    participants.forEach((p) => {
+      if (p.id === 'current-user') return; // User answers manually
+
+      // Random delay based on speed factor
+      const randomizedSpeed = Math.max(2, Math.min(timeLimit - 1, Math.floor(p.speed + (Math.random() * 8) - 4)));
+      
+      const timeoutId = setTimeout(() => {
+        setParticipants(prev => prev.map(part => {
+          if (part.id === p.id) {
+            // Determine answer (probabilities of correct answer depends on accuracy setting)
+            const currentQ = questions[currentQuestionIndex];
+            const isCorrect = Math.random() < p.accuracy;
+            let chosenOption = currentQ.correctAnswer;
+            
+            if (!isCorrect) {
+              // Select wrong option randomly
+              const wrongOptions = [0, 1, 2, 3].filter(o => o !== currentQ.correctAnswer);
+              chosenOption = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+            }
+
+            return {
+              ...part,
+              status: 'answered',
+              lastTimeTaken: randomizedSpeed,
+              lastSelectedOption: chosenOption,
+              lastAnswerCorrect: isCorrect
+            };
+          }
+          return part;
+        }));
+
+        // Periodically drop a simulated live message to state
+        if (Math.random() < 0.2) {
+          const nameshort = p.name.replace(" (IA)", "").replace(" (Invité)", "");
+          const text = "A soumis sa copie de calcul !";
+          setChatMessages(prev => [
+            {
+              id: `chat-sub-${Date.now()}-${p.id}-${Math.random().toString(36).substring(2, 9)}`,
+              senderName: p.name,
+              isAI: p.isAI,
+              isUser: false,
+              text,
+              time: 'En direct'
+            },
+            ...prev.slice(0, 15) // Keep last 15 messages
+          ]);
+        }
+
+      }, randomizedSpeed * 1000);
+
+      responseTimersRef.current.push(timeoutId as any);
+    });
+
+    return () => {
+      responseTimersRef.current.forEach(t => clearTimeout(t));
+    };
+  }, [stage, showFeedback, isPaused, currentQuestionIndex]);
+
+  // Handle User Response submission
+  const handleUserSelectAnswer = (optionIdx: number) => {
+    if (showFeedback || userAnswer !== null) return;
+    setUserAnswer(optionIdx);
+
+    // Save to cumulative userAnswers array
+    setUserAnswers(prev => {
+      const updated = [...prev];
+      updated[currentQuestionIndex] = optionIdx;
+      return updated;
+    });
+
+    const isCorrect = optionIdx === questions[currentQuestionIndex].correctAnswer;
+    playSound(isCorrect ? 'correct' : 'wrong');
+
+    // Update User participant properties
+    const timeTaken = timeLimit - timeLeft;
+    setParticipants(prev => prev.map(p => {
+      if (p.id === 'current-user') {
+        return {
+          ...p,
+          status: 'answered',
+          lastTimeTaken: timeTaken,
+          lastSelectedOption: optionIdx,
+          lastAnswerCorrect: isCorrect,
+          score: p.score + (isCorrect ? Math.round(20 * (timeLeft / timeLimit) + 20) : 0) // Speed-weighted scoring
+        };
+      }
+      return p;
+    }));
+  };
+
+  // Reveal results of the active QCM question
+  const handleRevealAnswers = () => {
+    setShowFeedback(true);
+    setFeedbackTimeLeft(8);
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    // Stop pending teammate submission simulators and resolve them instantly
+    responseTimersRef.current.forEach(t => clearTimeout(t));
+
+    const currentQ = questions[currentQuestionIndex];
+
+    // Any participant that hadn't answered now automatically fails or gets resolved
+    setParticipants(prev => {
+      const resolved = prev.map(p => {
+        if (p.id === 'current-user') return p;
+        if (p.status !== 'answered') {
+          // Resolve late-answering AIs and peers instantly
+          const isCorrect = Math.random() < p.accuracy * 0.8; // slightly penalized accuracy for timing out
+          let chosenOption = currentQ.correctAnswer;
+          if (!isCorrect) {
+            const wrongOptions = [0, 1, 2, 3].filter(o => o !== currentQ.correctAnswer);
+            chosenOption = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+          }
+          return {
+            ...p,
+            status: 'answered',
+            lastTimeTaken: timeLimit,
+            lastSelectedOption: chosenOption,
+            lastAnswerCorrect: isCorrect,
+            score: p.score + (isCorrect ? 20 : 0)
+          };
+        } else {
+          // Point allocation formula for AIs who answered in time
+          const speedFactor = (timeLimit - (p.lastTimeTaken || 10)) / timeLimit;
+          const questionsPoints = p.lastAnswerCorrect ? Math.round(20 * speedFactor + 20) : 0;
+          return {
+            ...p,
+            score: p.score + questionsPoints
+          };
+        }
+      });
+
+      // Sort live rankings for next steps
+      return resolved;
+    });
+
+    // Add candidate chat comments about correct/wrong responses to bring the arena to life!
+    setTimeout(() => {
+      // Pick 1-2 random participants to react
+      const randomOpponents = participants.filter(p => p.id !== 'current-user');
+      if (randomOpponents.length > 0) {
+        const commenter = randomOpponents[Math.floor(Math.random() * randomOpponents.length)];
+        // Get reaction text depending on correctness of their answer resolved in previous render
+        const actualReactionList = commenter.lastAnswerCorrect ? REACTION_PHRASES_CORRECT : REACTION_PHRASES_WRONG;
+        const text = actualReactionList[Math.floor(Math.random() * actualReactionList.length)];
+
+        setChatMessages(prev => [
+          {
+            id: `chat-react-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            senderName: commenter.name,
+            isAI: commenter.isAI,
+            isUser: false,
+            text: `« ${text} »`,
+            time: 'Instantané'
+          },
+          ...prev
+        ]);
+      }
+    }, 800);
+  };
+
+  // Advance to next question or complete and go to Podium
+  const handleNextQuestion = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
+      setLeftTime(timeLimit);
+      setUserAnswer(null);
+      setShowFeedback(false);
+      setParticipants(prev => prev.map(p => ({
+        ...p,
+        status: 'thinking',
+        lastSelectedOption: null,
+        lastAnswerCorrect: false
+      })));
+    } else {
+      // Finished all questions! 
+      playSound('finish');
+      setStage('podium');
+
+      // Compile and save result to historical database locally
+      const userObj = participants.find(p => p.id === 'current-user');
+      const userCorrectAnswersCount = participants.filter(p => p.id === 'current-user' && p.lastAnswerCorrect).length;
+      
+      const resData = {
+        id: `compe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        subjects: [`Défi Élite - ${subject}`],
+        date: new Date().toLocaleDateString('fr-FR'),
+        level,
+        score: userObj ? userObj.score : 0,
+        totalQuestions: questions.length,
+        mode: 'Test', // Registers under test metrics
+        questions,
+        userAnswers, // Use accurate cumulative answers array
+      };
+      
+      onSaveToHistory(resData);
+    }
+  };
+
+  // Generate official PDF Bulletin/Certificate of administrative competitive success
+  const handleGenerateBulletinPDF = () => {
+    const doc = new jsPDF();
+    const sorted = [...participants].sort((a, b) => b.score - a.score);
+    const userRank = sorted.findIndex(p => p.id === 'current-user') + 1;
+    const user = participants.find(p => p.id === 'current-user');
+
+    // Colors
+    const fasoGreen: [number, number, number] = [0, 158, 73];
+    const fasoBlue: [number, number, number] = [0, 51, 160];
+    const fasoRed: [number, number, number] = [239, 43, 45];
+
+    // Administrative Header
+    doc.setFillColor(248, 249, 250);
+    doc.rect(0, 0, 210, 297, 'F');
+
+    // Flag Header Strip
+    doc.setFillColor(fasoGreen[0], fasoGreen[1], fasoGreen[2]);
+    doc.rect(10, 10, 190, 4, 'F');
+    doc.setFillColor(fasoRed[0], fasoRed[1], fasoRed[2]);
+    doc.rect(10, 14, 190, 4, 'F');
+
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text("RÉPUBLIQUE DU BURKINA FASO", 105, 30, { align: "center" });
+    
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.text("La Patrie ou la Mort, nous vaincrons !", 105, 35, { align: "center" });
+
+    // Official Stamp details
+    doc.setLineWidth(0.5);
+    doc.setDrawColor(203, 213, 225);
+    doc.line(40, 40, 170, 40);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.setTextColor(fasoBlue[0], fasoBlue[1], fasoBlue[2]);
+    doc.text("BULLETIN DE CONCOURS ÉLITE (LIVE)", 105, 52, { align: "center" });
+
+    // Certificate details box
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(15, 60, 180, 85, 4, 4, 'FD');
+
+    doc.setTextColor(71, 85, 105);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    
+    doc.text("Établi par :", 25, 72);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Académie Faso Educ • Service d'Évaluation Numérique", 60, 72);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text("Sujet de spécialité :", 25, 80);
+    doc.setFont('helvetica', 'bold');
+    doc.text(subject, 60, 80);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text("Niveau théorique :", 25, 88);
+    doc.setFont('helvetica', 'bold');
+    doc.text(level, 60, 88);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text("Date du concours :", 25, 96);
+    doc.setFont('helvetica', 'bold');
+    doc.text(new Date().toLocaleDateString('fr-FR') + " à " + new Date().toLocaleTimeString('fr-FR'), 60, 96);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text("Candidat évalué :", 25, 104);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Vous (Candidature Locale)", 60, 104);
+
+    // Score metrics inside box
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(20, 112, 170, 25, 2, 2, 'F');
+
+    doc.setFontSize(11);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Score Final : ${user?.score} points`, 30, 122);
+    doc.text(`Rang Général : ${userRank}e sur ${participants.length} candidats`, 30, 130);
+
+    const matchLevelText = userRank === 1 ? "Major du Concours" : userRank <= 3 ? "Admis sur Liste Principale (Podium)" : "Admis sur Liste d'Attente";
+    doc.setTextColor(fasoGreen[0], fasoGreen[1], fasoGreen[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.text(matchLevelText, 115, 126);
+
+    // Full Leaderboard Table
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(12);
+    doc.text("CLASSEMENT OFFICIEL DES COMPÉTITEURS", 15, 160);
+
+    doc.setLineWidth(0.3);
+    doc.line(15, 164, 195, 164);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Rang", 18, 171);
+    doc.text("Nom du Candidat", 40, 171);
+    doc.text("Nature", 115, 171);
+    doc.text("Score Éval", 165, 171);
+    doc.line(15, 174, 195, 174);
+
+    doc.setFont('helvetica', 'normal');
+    let tableY = 181;
+    sorted.forEach((p, index) => {
+      if (p.id === 'current-user') {
+        doc.setFillColor(236, 253, 245);
+        doc.rect(15, tableY - 5, 180, 7, 'F');
+        doc.setFont('helvetica', 'bold');
+      } else {
+        doc.setFont('helvetica', 'normal');
+      }
+
+      doc.text(`${index + 1}`, 20, tableY);
+      doc.text(p.name, 40, tableY);
+      doc.text(p.isAI ? "Candidat IA" : p.id === 'current-user' ? "Vous" : "Invité Réseau", 115, tableY);
+      doc.text(`${p.score} pts`, 165, tableY);
+      
+      tableY += 8;
+    });
+
+    // Signatures
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(71, 85, 105);
+    doc.text("Le Superviseur Faso Educ", 140, 250);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.text("Certifié numérique conforme et impérissable", 133, 255);
+
+    // Append Correction Report detailed pages
+    doc.addPage();
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 0, 210, 297, 'F');
+
+    // Section Title
+    doc.setFillColor(fasoGreen[0], fasoGreen[1], fasoGreen[2]);
+    doc.rect(10, 15, 190, 8, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text("RAPPORT OFFICIEL DE CORRECTION - EXPLICATION DES SOLUTIONS", 15, 20);
+
+    let currY = 32;
+    questions.forEach((q, qIndex) => {
+      // Helper function to check space and add page
+      const checkSpace = (neededHeight: number) => {
+        if (currY + neededHeight > 275) {
+          doc.addPage();
+          doc.setFillColor(248, 250, 252);
+          doc.rect(0, 0, 210, 297, 'F');
+          
+          doc.setFillColor(fasoGreen[0], fasoGreen[1], fasoGreen[2]);
+          doc.rect(10, 15, 190, 6, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(9);
+          doc.text("RAPPORT DE CORRECTION COMPLET (Suite)", 15, 19);
+          
+          currY = 28;
+        }
+      };
+
+      checkSpace(40);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(fasoBlue[0], fasoBlue[1], fasoBlue[2]);
+      
+      const isUserCorrect = userAnswers[qIndex] === q.correctAnswer;
+      const userAnsText = userAnswers[qIndex] !== null 
+        ? `Votre choix : Option ${String.fromCharCode(65 + userAnswers[qIndex]!)} (${isUserCorrect ? 'Correcte' : 'Incorrecte'})`
+        : "Votre choix : Sans réponse (Temps écoulé)";
+        
+      doc.text(`Question ${qIndex + 1} sur ${questions.length}  —  ${isUserCorrect ? 'REUSSI' : 'ECHOUE'}`, 15, currY);
+      currY += 5;
+      
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text(userAnsText, 15, currY);
+      currY += 5;
+      
+      // Question Text
+      const textToRender = q.text.replace(/\\/g, '');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 41, 59);
+      
+      const qLines = doc.splitTextToSize(textToRender, 180);
+      checkSpace(qLines.length * 4.5 + 5);
+      qLines.forEach((line: string) => {
+        doc.text(line, 15, currY);
+        currY += 4.5;
+      });
+      currY += 2;
+      
+      // Options
+      q.options.forEach((opt, oIdx) => {
+        const isOptCorrect = oIdx === q.correctAnswer;
+        const isOptUserSelected = userAnswers[qIndex] === oIdx;
+        
+        if (isOptCorrect) {
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(fasoGreen[0], fasoGreen[1], fasoGreen[2]);
+        } else if (isOptUserSelected) {
+          doc.setFont('helvetica', 'italic');
+          doc.setTextColor(fasoRed[0], fasoRed[1], fasoRed[2]);
+        } else {
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(71, 85, 105);
+        }
+        
+        const cleanOpt = opt.replace(/\\/g, '');
+        const badge = isOptCorrect 
+          ? "[Bonne réponse] " 
+          : isOptUserSelected 
+            ? "[Votre choix incorrect] " 
+            : "";
+            
+        const optLines = doc.splitTextToSize(`${String.fromCharCode(65 + oIdx)}) ${badge}${cleanOpt}`, 175);
+        checkSpace(optLines.length * 4.2 + 2);
+        optLines.forEach((oLine: string) => {
+          doc.text(oLine, 18, currY);
+          currY += 4.2;
+        });
+      });
+      currY += 2;
+      
+      // Explanation Box
+      const cleanExpl = q.explanation.replace(/\\/g, '');
+      const explLines = doc.splitTextToSize(`Explication Faso Educ : ${cleanExpl}`, 175);
+      
+      checkSpace(explLines.length * 4.2 + 8);
+      doc.setFillColor(241, 245, 249);
+      doc.rect(15, currY - 2, 180, explLines.length * 4.2 + 4, 'F');
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(51, 65, 85);
+      
+      explLines.forEach((eLine: string) => {
+        doc.text(eLine, 18, currY + 1);
+        currY += 4.2;
+      });
+      
+      currY += 10;
+    });
+
+    doc.save(`FasoEduc_Bulletin_Concours_${subject.replace(/\s+/g, '_')}.pdf`);
+  };
+
+  // Sort live participants to show them swapping indices smoothly using framer-motion layout
+  const sortedParticipants = [...participants].sort((a, b) => b.score - a.score);
+
+  return (
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex items-center justify-between border-b dark:border-gray-800 pb-4">
+        <button 
+          onClick={onBack}
+          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 font-bold hover:underline"
+        >
+          <ArrowLeft size={18} /> Retour au tableau
+        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="p-2 border dark:border-gray-800 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition-all text-gray-600 dark:text-gray-400"
+          >
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
+        </div>
+      </div>
+
+      {/* SETUP PHASE: Configurer le concours */}
+      {stage === 'setup' && (
+        <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm">
+          <div className="text-center space-y-2">
+            <div className="inline-flex p-3 bg-faso-blue/10 rounded-full text-faso-blue mb-2">
+              <Trophy size={40} className="animate-pulse" />
+            </div>
+            <h2 className="text-2xl font-black dark:text-white">Arène de Concours d'Élite en Direct</h2>
+            <p className="text-sm text-gray-500 max-w-lg mx-auto">
+              Mesurez vos aptitudes en temps réel face à des pairs invités ou des adversaires IA. Un classement instantané est calculé à chaque question !
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+            {/* Subject Selection Column */}
+            <div className="space-y-4">
+              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
+                <Settings size={18} className="text-faso-blue" />
+                1. Structure de l'épreuve
+              </h3>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase">Sujet / Matière d'évaluation</label>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Saisissez ou choisissez un sujet ci-dessous"
+                    className="w-full p-3 border dark:border-gray-800 rounded-xl outline-none focus:ring-1.5 focus:ring-faso-blue dark:bg-gray-950 dark:text-white font-bold text-sm"
+                  />
+                  <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                    {subjectSuggestions.map((s, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setSubject(s.title)}
+                        className={cn(
+                          "text-left p-2.5 rounded-lg text-xs font-semibold border transition-all",
+                          subject === s.title 
+                            ? "bg-faso-blue/10 text-faso-blue border-faso-blue/30" 
+                            : "bg-gray-50 dark:bg-gray-950 hover:bg-gray-100 border-transparent text-gray-700 dark:text-gray-300"
+                        )}
+                      >
+                        <span className="text-[10px] font-bold text-faso-green block uppercase tracking-wider mb-0.5">{s.category}</span>
+                        {s.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Niveau d'exigence</label>
+                  <select
+                    value={level}
+                    onChange={(e) => setLevel(e.target.value as Level)}
+                    className="w-full p-3 bg-gray-50 dark:bg-gray-950 border dark:border-gray-800 rounded-xl outline-none text-xs dark:text-white"
+                  >
+                    <option value="Premier cycle">Premier cycle</option>
+                    <option value="Licence">Licence</option>
+                    <option value="Master">Master</option>
+                  </select>
+                </div>
+                
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Durée de réflexion</label>
+                  <select
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(Number(e.target.value))}
+                    className="w-full p-3 bg-gray-50 dark:bg-gray-950 border dark:border-gray-800 rounded-xl outline-none text-xs dark:text-white"
+                  >
+                    <option value={15}>15 s (Blitz)</option>
+                    <option value={30}>30 s (Rapide)</option>
+                    <option value={45}>45 s (Standard)</option>
+                    <option value={60}>60 s (Équilibré)</option>
+                    <option value={90}>90 s (Théorique)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-400 uppercase">Nombre total de QCMs</label>
+                  <span className="text-xs font-black bg-faso-green/10 text-faso-green px-2.5 py-0.5 rounded-full">
+                    {questionCount} questions
+                  </span>
+                </div>
+                
+                {/* Presets */}
+                <div className="flex gap-2">
+                  {[10, 20, 40, 60].map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setQuestionCount(count)}
+                      className={cn(
+                        "flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                        questionCount === count 
+                          ? "bg-faso-green text-white border-faso-green shadow-xs" 
+                          : "bg-gray-50 dark:bg-gray-950 hover:bg-gray-100 dark:hover:bg-gray-900 text-gray-600 dark:text-gray-400 border-gray-100 dark:border-gray-800"
+                      )}
+                    >
+                      {count} QCMs
+                    </button>
+                  ))}
+                </div>
+
+                {/* Slider bar for custom selection */}
+                <div className="bg-gray-50 dark:bg-gray-950/60 p-3 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-2">
+                  <div className="flex justify-between text-[10px] text-gray-400 font-bold">
+                    <span>MIN: 5</span>
+                    <span>MOYEN: 30</span>
+                    <span>MAX: 60</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="60"
+                    step="1"
+                    value={questionCount}
+                    onChange={(e) => setQuestionCount(Number(e.target.value))}
+                    className="w-full accent-faso-green h-1.5 bg-gray-200 dark:bg-gray-800 rounded-lg cursor-pointer"
+                  />
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center italic">
+                    Glissez pour ajuster précisément le volume de l'épreuve. Plus le nombre est élevé, plus l'analyse globale est exhaustive.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Invited candidates & AI competitors Column */}
+            <div className="space-y-4 bg-gray-50 dark:bg-gray-950/40 p-5 rounded-3xl border border-gray-100 dark:border-gray-800">
+              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
+                <Users size={18} className="text-faso-green" />
+                2. Candidats en présence
+              </h3>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase">Adversaires autonomes (IA)</label>
+                <div className="flex items-center justify-between gap-4 p-3 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-xl">
+                  <span className="text-xs font-bold dark:text-white">Ajuster le nombre d'IAs candidates</span>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setAiCount(prev => Math.max(0, prev - 1))}
+                      disabled={aiCount <= 0}
+                      className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white"
+                    >
+                      -
+                    </button>
+                    <span className="font-extrabold text-sm dark:text-white px-2">{aiCount}</span>
+                    <button 
+                      onClick={() => setAiCount(prev => Math.min(10, prev + 1))}
+                      disabled={aiCount >= 10}
+                      className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  Les cerveaux IA ont des niveaux d'évaluation adaptatifs. Ils calculent en temps réel selon leur coefficient cognitif !
+                </p>
+              </div>
+
+              {/* Humans dynamic invite list */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase">Inviter des amis ou réviseurs</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newInviteName}
+                    onChange={(e) => setNewInviteName(e.target.value)}
+                    placeholder="Saisissez un prénom/nom (ex: Fatou)"
+                    className="flex-1 p-2.5 border rounded-xl outline-none text-xs dark:bg-gray-950 dark:text-white"
+                  />
+                  <button
+                    onClick={handleAddInviteName}
+                    className="px-4 py-2 bg-faso-blue text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0"
+                  >
+                    <Plus size={14} /> Inviter
+                  </button>
+                </div>
+
+                {customInvitations.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {customInvitations.map((name, idx) => (
+                      <span 
+                        key={idx}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-faso-green/10 text-faso-green rounded-full text-xs font-bold font-sans"
+                      >
+                        {name}
+                        <button onClick={() => handleRemoveInvite(idx)}>
+                          <X size={12} className="text-red-500 hover:scale-110" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-400 italic">
+                    Aucun candidat humain invité à ce stade. Ajoutez-en ou lancez seul contre les IAs !
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleStartLobby}
+            className="w-full py-4 bg-faso-blue hover:bg-blue-600 text-white font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-sm"
+          >
+            <Play size={18} />
+            Accéder à la Salle de Concours (Lobby)
+          </button>
+        </div>
+      )}
+
+      {/* LOBBY PHASE: Salon de préparation */}
+      {stage === 'lobby' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Invited Candidates Box */}
+          <div className="lg:col-span-8 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-6 space-y-5 shadow-sm">
+            <div className="flex items-center justify-between border-b dark:border-gray-800 pb-3">
+              <div>
+                <span className="text-[10px] font-bold text-faso-blue uppercase tracking-wider">SALON NUMÉRO #{roomNumber}</span>
+                <h3 className="font-extrabold text-lg dark:text-white">Candidats connectés dans le lobby</h3>
+              </div>
+              <span className="bg-faso-green/10 text-faso-green font-bold text-xs px-2.5 py-1 rounded-full flex items-center gap-1">
+                <Users size={12} />
+                {participants.length} candidats
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-h-[220px]">
+              {participants.map((p) => (
+                <div 
+                  key={p.id}
+                  className="flex items-center justify-between p-3.5 bg-gray-50 dark:bg-gray-950 border border-gray-100 dark:border-gray-800 rounded-2xl"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm",
+                      p.id === 'current-user' ? "bg-faso-blue text-white" : p.isAI ? "bg-purple-100 text-purple-700 dark:bg-purple-950/20" : "bg-emerald-100 text-emerald-700"
+                    )}>
+                      {p.name.slice(0, 2)}
+                    </div>
+                    <div>
+                      <span className="font-extrabold text-sm dark:text-white block leading-snug">{p.name}</span>
+                      <span className="text-[9px] text-gray-400 font-semibold uppercase">{p.id === 'current-user' ? "VOUS" : p.isAI ? "Cerveau Autonome (IA)" : "Invité Réseau"}</span>
+                    </div>
+                  </div>
+                  
+                  <span className="text-[10px] bg-green-50 text-green-700 dark:bg-green-950/20 font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0">
+                    <Check size={12} /> Prêt
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Simulated Live Action Link block */}
+            <div className="bg-gradient-to-tr from-faso-blue/5 via-transparent to-faso-green/5 border border-faso-blue/10 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="space-y-0.5 text-center sm:text-left">
+                <h4 className="font-bold text-sm dark:text-white">Lien de partage du concours d'élite</h4>
+                <p className="text-xs text-gray-500">Envoyez ce lien aux réviseurs de votre académie burkinabè pour qu'ils s'agrègent en live !</p>
+              </div>
+              <button
+                onClick={copySimulatedLink}
+                className="px-4 py-2 bg-white dark:bg-gray-950 border dark:border-gray-850 hover:bg-gray-50 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 dark:text-gray-300"
+              >
+                <Share2 size={12} />
+                {copiedLink ? "Lien copié !" : "Copier l'invitation"}
+              </button>
+            </div>
+
+            {/* Action launcher */}
+            <div className="pt-4 border-t dark:border-gray-800 flex justify-between gap-4 flex-wrap">
+              <button
+                onClick={() => setStage('setup')}
+                className="px-5 py-3 border border-gray-200 dark:border-gray-800 hover:bg-gray-50 text-gray-600 dark:text-gray-400 font-bold text-xs rounded-xl transition-all"
+              >
+                Ajuster les réglages
+              </button>
+              <button
+                onClick={handleLaunchCompetition}
+                disabled={loadingQuestions}
+                className="px-6 py-3 bg-faso-blue hover:bg-blue-600 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-2 justify-center"
+              >
+                {loadingQuestions ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Rédaction des QCMs par l'IA...
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} />
+                    Lancer officiellement la compétition
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Chat Sidebar during lobby */}
+          <div className="lg:col-span-4 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-5 space-y-4 shadow-sm min-h-[400px] flex flex-col justify-between">
+            <h4 className="font-extrabold text-sm dark:text-white pb-2 border-b dark:border-gray-800 flex items-center gap-1.5">
+              <MessageSquare size={16} className="text-faso-blue" />
+              Échanges & Réactions
+            </h4>
+
+            {/* Message Area */}
+            <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3 pr-1 text-xs sm:text-sm">
+              {chatMessages.map((msg) => (
+                <div key={msg.id} className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn(
+                      "font-black text-[11px]",
+                      msg.isUser ? "text-faso-blue" : msg.isAI ? "text-purple-600" : "text-gray-600 dark:text-gray-400"
+                    )}>
+                      {msg.senderName}
+                    </span>
+                    <span className="text-[9px] text-gray-400">{msg.time}</span>
+                  </div>
+                  <div className="p-2.5 bg-gray-50 dark:bg-gray-950 border dark:border-gray-850 rounded-xl leading-relaxed text-gray-800 dark:text-gray-300">
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Quick response buttons to simulate chat with other competitors */}
+            <div className="space-y-2 pt-2 border-t dark:border-gray-1000">
+              <span className="text-[10px] font-bold text-gray-450 uppercase block">Envoyer une phrase rapide</span>
+              <div className="grid grid-cols-2 gap-1 px-1">
+                {[
+                  "Prêt pour le combat !",
+                  "Le chronomètre m'inquiète.",
+                  "Bonne chance à tous !",
+                  "Concentration totale."
+                ].map((phrase) => (
+                  <button
+                    key={phrase}
+                    onClick={() => {
+                      setChatMessages(prev => [
+                        {
+                          id: `chat-usr-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                          senderName: 'Vous (Candidat)',
+                          isAI: false,
+                          isUser: true,
+                          text: phrase,
+                          time: 'Maintenant'
+                        },
+                        ...prev
+                      ]);
+                    }}
+                    className="p-2 bg-gray-50 dark:bg-gray-950 hover:bg-gray-100 dark:hover:bg-gray-850 rounded-lg text-[10px] text-gray-600 dark:text-gray-450 font-semibold text-left border"
+                  >
+                    {phrase}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTIVE COMPETITION STAGE: Le concours actif */}
+      {stage === 'active' && questions.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Main QCM Body */}
+          <div className="lg:col-span-8 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm relative">
+            {/* Header detail */}
+            <div className="flex justify-between items-center gap-4">
+              <span className="px-3 py-1 bg-faso-blue/10 text-faso-blue rounded-full text-xs font-black uppercase">
+                Question {currentQuestionIndex + 1} sur {questions.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Clock size={16} className="text-gray-400" />
+                <span className={cn(
+                  "font-mono font-bold text-base",
+                  timeLeft <= 6 ? "text-red-500 animate-bounce" : "text-gray-600 dark:text-gray-400"
+                )}>
+                  {timeLeft} s restants
+                </span>
+              </div>
+            </div>
+
+            {/* Progress Bar of game */}
+            <ProgressBar progress={((currentQuestionIndex) / questions.length) * 100} color="bg-faso-blue" />
+
+            {/* The Question Text in Math KaTeX rendering */}
+            <h2 className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white leading-snug">
+              <MathRenderer text={questions[currentQuestionIndex].text} />
+            </h2>
+
+            {/* Options selection */}
+            <div className="grid grid-cols-1 gap-3 pt-2">
+              {questions[currentQuestionIndex].options.map((opt, idx) => {
+                const isSelected = userAnswer === idx;
+                const isCorrect = idx === questions[currentQuestionIndex].correctAnswer;
+                
+                return (
+                  <button
+                    key={idx}
+                    disabled={showFeedback || userAnswer !== null}
+                    onClick={() => handleUserSelectAnswer(idx)}
+                    className={cn(
+                      "w-full text-left p-4 rounded-2xl border font-semibold text-sm transition-all flex items-center justify-between",
+                      // Selected and feedback state styling
+                      !showFeedback
+                        ? (isSelected 
+                            ? "border-faso-blue bg-faso-blue/5 text-faso-blue" 
+                            : "hover:bg-gray-50 border-gray-200 dark:border-gray-850 text-gray-800 dark:text-gray-200"
+                          )
+                        : (isCorrect 
+                            ? "bg-green-100 border-green-400 text-green-800 dark:bg-green-950/20 dark:text-green-300 dark:border-green-800"
+                            : (isSelected 
+                                ? "bg-red-100 border-red-400 text-red-800 dark:bg-red-950/20 dark:text-red-300 dark:border-red-800"
+                                : "opacity-50 border-gray-200 dark:border-gray-850 text-gray-700 dark:text-gray-300"
+                              )
+                          )
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-850 font-bold text-xs leading-none shrink-0 border">
+                        {String.fromCharCode(65 + idx)}
+                      </span>
+                      <div className="flex-1 text-left leading-normal font-sans">
+                        <MathRenderer text={opt} />
+                      </div>
+                    </div>
+
+                    {showFeedback && isCorrect && <Check className="text-green-500 shrink-0" size={18} />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Interactive explanation/feedback footer block */}
+            <AnimatePresence>
+              {showFeedback && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-blue-50/70 border border-blue-105 rounded-2xl p-5 space-y-4 dark:bg-blue-950/20 dark:border-blue-900/40 text-left"
+                >
+                  <div>
+                    <h4 className="font-extrabold text-sm text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
+                      <Sparkles size={16} /> Explication pédagogique Faso Educ (IA)
+                    </h4>
+                    <p className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
+                      Préparez-vous pour l'excellence académique burkinabè.
+                    </p>
+                  </div>
+                  
+                  <div className="text-xs sm:text-sm text-blue-900 dark:text-blue-200 leading-relaxed font-sans border-t border-b border-blue-100 dark:border-blue-900/30 py-3">
+                    <MathRenderer text={questions[currentQuestionIndex].explanation} />
+                  </div>
+
+                  {/* Automatic progression feedback strip and skip action */}
+                  <div className="space-y-2">
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <span className="text-xs font-bold text-green-700 dark:text-green-300 flex items-center gap-1.5 animate-pulse">
+                        <Zap size={14} className="text-faso-green" />
+                        Passage automatique {currentQuestionIndex === questions.length - 1 ? "aux résultats" : "à la question suivante"} dans {feedbackTimeLeft}s...
+                      </span>
+                      <button
+                        onClick={handleNextQuestion}
+                        className="w-full sm:w-auto px-4 py-2 bg-faso-blue hover:bg-blue-650 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1"
+                      >
+                        {currentQuestionIndex === questions.length - 1 ? "Résultats instantanés" : "Sauter l'attente"}
+                        <ArrowRight size={14} />
+                      </button>
+                    </div>
+
+                    <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1 overflow-hidden">
+                      <motion.div 
+                        className="bg-faso-green h-full"
+                        initial={{ width: "100%" }}
+                        animate={{ width: `${(feedbackTimeLeft / 8) * 100}%` }}
+                        transition={{ duration: 1, ease: "linear" }}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Active Competition Scoreboard Sidebar */}
+          <div className="lg:col-span-4 space-y-4">
+            {/* Live rankings panel */}
+            <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-5 space-y-4 shadow-sm">
+              <h3 className="font-extrabold text-sm dark:text-white pb-2 border-b dark:border-gray-800 flex items-center gap-1.5 justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Trophy size={16} className="text-amber-500 animate-pulse" />
+                  Classement en direct
+                </span>
+                <span className="text-[10px] text-gray-400 uppercase font-bold">Mise à jour live</span>
+              </h3>
+
+              {/* Dynamic list with framer-motion layout enabling nice animations when swapping places */}
+              <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                {sortedParticipants.map((p, index) => {
+                  const isUser = p.id === 'current-user';
+                  const showsCorrectIndicator = showFeedback && p.lastAnswerCorrect;
+                  const showsWrongIndicator = showFeedback && p.lastSelectedOption !== null && !p.lastAnswerCorrect;
+
+                  return (
+                    <motion.div 
+                      key={p.id}
+                      layout
+                      transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                      className={cn(
+                        "flex items-center justify-between p-2.5 rounded-xl border transition-all text-xs",
+                        isUser 
+                          ? "bg-faso-blue/10 border-faso-blue/30 text-faso-blue font-bold" 
+                          : "bg-gray-50 dark:bg-gray-950 border-gray-100 dark:border-gray-850"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 max-w-[70%]">
+                        <span className="font-bold text-[11px] text-gray-400 w-4 block text-center">
+                          {index + 1}e
+                        </span>
+                        <div className={cn(
+                          "w-6 h-6 rounded-full flex items-center justify-center font-bold text-[9px] shrink-0",
+                          isUser ? "bg-faso-blue text-white" : "bg-gray-200 text-gray-600 dark:bg-gray-800/80 dark:text-gray-450"
+                        )}>
+                          {p.name.slice(0, 2)}
+                        </div>
+                        <span className="font-black truncate block dark:text-white">
+                          {p.name.replace(" (IA)", "").replace(" (Invité)", "")}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Status label: Thinking or Answered */}
+                        {!showFeedback ? (
+                          p.status === 'thinking' ? (
+                            <span className="text-[9px] text-gray-450 italic flex items-center gap-0.5">
+                              <Loader2 size={10} className="animate-spin text-faso-blue" />
+                              Calcul...
+                            </span>
+                          ) : (
+                            <span className="text-[9px] bg-green-50 text-green-700 dark:bg-green-950/20 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-0.5">
+                              <Zap size={8} /> Répondu
+                            </span>
+                          )
+                        ) : (
+                          // End of question answer correctness status values
+                          showsCorrectIndicator ? (
+                            <span className="text-[9px] bg-green-50 text-green-700 dark:bg-green-950/10 px-1.5 py-0.5 rounded-md font-bold">
+                              ✓ +{20}
+                            </span>
+                          ) : showsWrongIndicator ? (
+                            <span className="text-[9px] bg-red-50 text-red-700 dark:bg-red-950/10 px-1.5 py-0.5 rounded-md font-bold">
+                              ✗ +0
+                            </span>
+                          ) : (
+                            <span className="text-[9px] text-gray-400 italic">Sans réponse</span>
+                          )
+                        )}
+                        <span className="font-mono font-extrabold w-12 text-right">
+                          {p.score} pts
+                        </span>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Chat ticker during questions */}
+            <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-5 space-y-3 shadow-sm min-h-[160px] flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-gray-450 uppercase block">Commentaires à chaud</span>
+              
+              <div className="flex-1 overflow-y-auto max-h-[140px] space-y-2 pr-1 text-[11px] leading-relaxed">
+                {chatMessages.filter(m => m.senderName !== 'Système Faso Arena').map((m) => (
+                  <div key={m.id} className="p-2 bg-gray-50 dark:bg-gray-950 rounded-xl space-y-0.5">
+                    <span className="font-extrabold text-[10px] block dark:text-white leading-none">{m.senderName}</span>
+                    <span className="text-gray-600 dark:text-gray-300 font-sans block">{m.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PODIUM CEREMONY: La fin, classement de l'arène */}
+      {stage === 'podium' && (
+        <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-6 sm:p-8 space-y-8 shadow-sm text-center">
+          <div className="space-y-2">
+            <span className="px-3 py-1 bg-faso-green/10 text-faso-green rounded-full text-xs font-black uppercase">
+              Résultats officiels de l'Épreuve
+            </span>
+            <h2 className="text-3xl font-black dark:text-white leading-tight">Proclamations & Tableau d'Honneur</h2>
+            <p className="text-sm text-gray-500 max-w-sm mx-auto">
+              Sujet de composition : <strong>{subject}</strong>. Félicitations à tous les braves candidats burkinabè pour cet effort académique !
+            </p>
+          </div>
+
+          {/* Visual Podium block */}
+          <div className="flex flex-col sm:flex-row items-end justify-center gap-6 pt-6 pb-2 max-w-md mx-auto">
+            {/* 2nd Place */}
+            {sortedParticipants[1] && (
+              <div className="flex flex-col items-center w-full sm:w-28 space-y-2 order-2 sm:order-1">
+                <span className="text-xs font-extrabold dark:text-gray-300 truncate w-full text-center">
+                  {sortedParticipants[1].name.replace(" (IA)", "").replace(" (Invité)", "")}
+                </span>
+                <span className="text-[10px] text-gray-400 font-bold">{sortedParticipants[1].score} pts</span>
+                <div className="w-full bg-slate-100 border border-slate-200 h-16 rounded-t-xl flex flex-col items-center justify-center p-2 dark:bg-slate-950 dark:border-slate-800">
+                  <span className="text-sm font-bold text-slate-500">2e RANG</span>
+                  <Award size={18} className="text-slate-400 mt-1" />
+                </div>
+              </div>
+            )}
+
+            {/* 1st Place */}
+            {sortedParticipants[0] && (
+              <div className="flex flex-col items-center w-full sm:w-32 space-y-2 order-1 sm:order-2">
+                <span className="text-sm font-black text-amber-600 truncate w-full text-center flex items-center justify-center gap-1">
+                  <Trophy size={14} className="text-amber-500 animate-bounce" />
+                  {sortedParticipants[0].name.replace(" (IA)", "").replace(" (Invité)", "")}
+                </span>
+                <span className="text-xs text-amber-600 font-extrabold">{sortedParticipants[0].score} pts</span>
+                <div className="w-full bg-amber-50 border border-amber-200 h-24 rounded-t-2xl flex flex-col items-center justify-center p-2 dark:bg-amber-955/20 dark:border-amber-800">
+                  <span className="text-base font-black text-amber-500">1er MAJOR</span>
+                  <Trophy size={24} className="text-amber-500 mt-1" />
+                </div>
+              </div>
+            )}
+
+            {/* 3rd Place */}
+            {sortedParticipants[2] && (
+              <div className="flex flex-col items-center w-full sm:w-24 space-y-2 order-3">
+                <span className="text-xs font-semibold dark:text-orange-300 truncate w-full text-center">
+                  {sortedParticipants[2].name.replace(" (IA)", "").replace(" (Invité)", "")}
+                </span>
+                <span className="text-[10px] text-gray-400 font-bold">{sortedParticipants[2].score} pts</span>
+                <div className="w-full bg-orange-50 border border-orange-100 h-12 rounded-t-lg flex flex-col items-center justify-center p-2 dark:bg-orange-955/10 dark:border-orange-900/30">
+                  <span className="text-xs font-bold text-orange-600">3e RANG</span>
+                  <Award size={14} className="text-orange-500 mt-1" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t dark:border-gray-800" />
+
+          {/* Table Listing detail */}
+          <div className="max-w-xl mx-auto space-y-3">
+            <h3 className="font-extrabold text-sm dark:text-white text-left uppercase text-gray-400 tracking-wider">Tableau général de classement</h3>
+            
+            <div className="space-y-1 bg-gray-50 dark:bg-gray-950/40 p-4 rounded-3xl border border-gray-100 dark:border-gray-800/80">
+              {sortedParticipants.map((p, idx) => {
+                const isUser = p.id === 'current-user';
+
+                return (
+                  <div 
+                    key={p.id}
+                    className={cn(
+                      "flex items-center justify-between p-3 rounded-2xl text-xs font-semibold transition-all",
+                      isUser ? "bg-faso-green/10 text-faso-green font-bold" : "text-gray-700 dark:text-gray-300"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-gray-400 font-bold w-6">{idx + 1}e</span>
+                      <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center font-bold text-[10px]">
+                        {p.name.slice(0, 2)}
+                      </div>
+                      <span>{p.name}</span>
+                    </div>
+                    <span className="font-mono font-bold">{p.score} points</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border-t dark:border-gray-800" />
+
+          {/* Interactive Report of Corrections and Explanations */}
+          <div className="max-w-xl mx-auto space-y-4 text-left">
+            <h3 className="font-extrabold text-sm dark:text-white uppercase text-gray-400 tracking-wider flex items-center gap-1.5">
+              <Sparkles size={16} className="text-faso-green animate-pulse" />
+              Rapport de correction et explications de l'IA
+            </h3>
+
+            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 grid grid-cols-1 gap-1">
+              {questions.map((q, qIndex) => {
+                const userAns = userAnswers[qIndex];
+                const isCorrect = userAns === q.correctAnswer;
+
+                return (
+                  <div 
+                    key={qIndex}
+                    className={cn(
+                      "p-4 rounded-2xl border transition-all text-sm space-y-3",
+                      isCorrect 
+                        ? "bg-green-50/20 border-green-200/50 dark:bg-green-950/5 dark:border-green-900/30" 
+                        : "bg-red-50/20 border-red-200/50 dark:bg-red-950/5 dark:border-red-900/30"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b dark:border-gray-800 pb-2">
+                      <span className={cn(
+                        "text-[9px] uppercase font-black px-2.5 py-0.5 rounded-full shrink-0",
+                        isCorrect 
+                          ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300" 
+                          : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                      )}>
+                        Q{qIndex + 1} : {isCorrect ? 'Réussi ✓' : 'Échoué ✗'}
+                      </span>
+                      <span className="text-[10px] font-mono text-gray-400 font-bold">
+                        {userAns !== null ? `Option choisie : ${String.fromCharCode(65 + userAns)}` : "Temps écoulé"}
+                      </span>
+                    </div>
+
+                    <h4 className="font-extrabold text-xs sm:text-sm text-gray-900 dark:text-white leading-relaxed">
+                      <MathRenderer text={q.text} />
+                    </h4>
+
+                    {/* Options list */}
+                    <div className="space-y-1.5 pl-2 border-l border-gray-200 dark:border-gray-800">
+                      {q.options.map((opt, oIdx) => {
+                        const isCorrectOpt = oIdx === q.correctAnswer;
+                        const isUserOpt = oIdx === userAns;
+                        return (
+                          <div 
+                            key={oIdx}
+                            className={cn(
+                              "text-xs p-2 rounded-lg flex items-center justify-between",
+                              isCorrectOpt 
+                                ? "bg-green-100/60 dark:bg-green-950/30 text-green-900 dark:text-green-300 font-extrabold" 
+                                : isUserOpt 
+                                  ? "bg-red-100/60 dark:bg-red-955/30 text-red-900 dark:text-red-350"
+                                  : "text-gray-600 dark:text-gray-400"
+                            )}
+                          >
+                            <span className="leading-snug">
+                              {String.fromCharCode(65 + oIdx)}. <MathRenderer text={opt} />
+                            </span>
+                            {isCorrectOpt && <Check size={12} className="text-green-600 shrink-0 ml-1" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Mathematical correction notes */}
+                    <div className="bg-gray-50/80 dark:bg-gray-950/60 p-3 rounded-xl border border-gray-100 dark:border-gray-850 text-[11px] text-gray-600 dark:text-gray-350 font-sans leading-relaxed">
+                      <strong className="text-faso-blue dark:text-blue-400 block mb-1">Démonstration pédagogique :</strong>
+                      <MathRenderer text={q.explanation} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border-t dark:border-gray-800" />
+
+          {/* Post action operations */}
+          <div className="flex flex-col sm:flex-row gap-3 pt-4 max-w-lg mx-auto">
+            <button
+              onClick={handleGenerateBulletinPDF}
+              className="flex-1 px-5 py-3.5 bg-faso-green hover:bg-green-600 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1"
+            >
+              <Download size={14} /> Telecharger le Bulletin (PDF)
+            </button>
+            <button
+              onClick={() => {
+                setStage('setup');
+                setCustomInvitations([]);
+                setNewInviteName("");
+                setQuestions([]);
+              }}
+              className="flex-1 px-5 py-3.5 bg-faso-blue hover:bg-blue-600 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5"
+            >
+              <RotateCcw size={14} /> Recommencer un Concours
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

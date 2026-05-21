@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+@theme {
+  --color-faso-green: #009E49;
+  --color-faso-yellow: #FCD116;
+  --color-faso-blue: #00B5E2;
+  --color-faso-red: #EF3340;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+/* Global readability enhancement: Scales up font sizes and increases line-height */
+html {
+  font-size: 16.5px; /* Slightly increases base rem scaling application-wide */
+}
+
+body {
+  line-height: 1.625;
+}
+
+/* Specific scale improvements for subtitles, details, and primary text bodies */
+.text-xs {
+  font-size: 0.85rem !important; /* Larger than default 0.75rem for subtitles/metadata */
+  letter-spacing: 0.015em;
+}
+
+.text-sm {
+  font-size: 0.95rem !important; /* Larger than default 0.875rem for key texts */
+  line-height: 1.5;
+}
+
+.text-base {
+  font-size: 1.1rem !important; /* Larger than default 1rem */
+}
+
+.text-lg {
+  font-size: 1.22rem !important; /* Larger than default 1.125rem */
+}
+
+.text-xl {
+  font-size: 1.35rem !important; /* Larger than default 1.25rem */
+}
+
+.text-2xl {
+  font-size: 1.65rem !important; /* Larger than default 1.5rem */
+}
+
+/* User-friendly glass blur design utility */
+.glass-panel {
+  background-color: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+}
+
+.dark .glass-panel {
+  background-color: rgba(17, 24, 39, 0.75);
+  backdrop-filter: blur(12px);
+}
+

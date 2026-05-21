@@ -1,0 +1,8 @@
+{
+  "name": "ReFaso Educ",
+  "description": "Application de génération de quiz pédagogiques de haute qualité sur divers sujets avec modes entraînement, test et concours.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
