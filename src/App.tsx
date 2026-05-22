@@ -41,6 +41,7 @@ import { cn } from './lib/utils';
 import { Level, Difficulty, QuizMode, Question, QuizSettings, QuizResult, CourseData, ForumPost, ForumReply, UserProfile, ManualPaymentTx } from './types';
 import { generateQuizQuestions, generateCourse, generateForumAIResponse } from './services/geminiService';
 import { generateQuizPDF, generateCoursePDF } from './lib/pdfGenerator';
+import { getApiUrl } from './lib/api';
 import { precompiledCourses } from './data/precompiledCourses';
 import { precompiledForum } from './data/precompiledForum';
 import { MathRenderer } from './components/MathRenderer';
@@ -156,7 +157,7 @@ export default function App() {
       try {
         setBackendSyncStatus('syncing');
         // A. Load Supabase configuration if returned by Express backend
-        const configRes = await fetch('/api/supabase-config');
+        const configRes = await fetch(getApiUrl('/api/supabase-config'));
         if (configRes.ok && isActive) {
           const config = await configRes.json();
           if (config.supabaseUrl && config.supabaseAnonKey) {
@@ -167,7 +168,7 @@ export default function App() {
         }
 
         // B. Fetch server-side banned list
-        const banRes = await fetch('/api/users/banned');
+        const banRes = await fetch(getApiUrl('/api/users/banned'));
         if (banRes.ok && isActive) {
           const banData = await banRes.json();
           if (Array.isArray(banData.bannedEmails)) {
@@ -176,7 +177,7 @@ export default function App() {
         }
 
         // C. Fetch server-side payments to synchronize across Render clients
-        const payRes = await fetch('/api/payments');
+        const payRes = await fetch(getApiUrl('/api/payments'));
         if (payRes.ok && isActive) {
           const payData = await payRes.json();
           if (Array.isArray(payData) && payData.length > 0) {
@@ -186,7 +187,7 @@ export default function App() {
 
         // D. Fetch hidden payment operational parameters routing details
         try {
-          const credsRes = await fetch('/api/payment-credentials');
+          const credsRes = await fetch(getApiUrl('/api/payment-credentials'));
           if (credsRes.ok && isActive) {
             const credsData = await credsRes.json();
             setPaymentCredentials(credsData);
@@ -200,7 +201,7 @@ export default function App() {
         const cachedToken = localStorage.getItem('faso_educ_jwt_token');
         if (cachedToken) {
           try {
-            const authRes = await fetch('/api/auth/token-sync', {
+            const authRes = await fetch(getApiUrl('/api/auth/token-sync'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ token: cachedToken })
@@ -234,7 +235,7 @@ export default function App() {
         // F. Sync courses and quiz history
         if (activeEmail && isActive) {
           try {
-            const coursesRes = await fetch(`/api/courses?email=${encodeURIComponent(activeEmail)}`);
+            const coursesRes = await fetch(getApiUrl(`/api/courses?email=${encodeURIComponent(activeEmail)}`));
             if (coursesRes.ok) {
               const coursesData = await coursesRes.json();
               if (Array.isArray(coursesData) && coursesData.length > 0) {
@@ -246,7 +247,7 @@ export default function App() {
           }
 
           try {
-            const historyRes = await fetch(`/api/history?email=${encodeURIComponent(activeEmail)}`);
+            const historyRes = await fetch(getApiUrl(`/api/history?email=${encodeURIComponent(activeEmail)}`));
             if (historyRes.ok) {
               const historyData = await historyRes.json();
               if (Array.isArray(historyData) && historyData.length > 0) {
@@ -275,7 +276,7 @@ export default function App() {
 
     async function syncProfileWithBackend() {
       try {
-        const res = await fetch(`/api/profiles/${encodeURIComponent(profile.email)}`);
+        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}`));
         if (res.ok && isActive) {
           const serverProf = await res.json();
           if (serverProf && serverProf.registered) {
@@ -290,7 +291,7 @@ export default function App() {
         }
 
         // Send active properties to save on backend
-        await fetch('/api/profiles/sync', {
+        await fetch(getApiUrl('/api/profiles/sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(profile)
@@ -388,7 +389,7 @@ export default function App() {
     localStorage.setItem('faso_educ_generated_courses', JSON.stringify(generatedCourses));
     if (profile.registered && profile.email && generatedCourses.length > 0) {
       generatedCourses.forEach(course => {
-        fetch('/api/courses', {
+        fetch(getApiUrl('/api/courses'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -467,7 +468,7 @@ export default function App() {
     localStorage.setItem('faso_educ_history', JSON.stringify(history));
     if (profile.registered && profile.email && history.length > 0) {
       history.forEach(result => {
-        fetch('/api/history', {
+        fetch(getApiUrl('/api/history'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2683,7 +2684,7 @@ export default function App() {
     setManualPayments(prev => [newTx, ...prev]);
     
     // Server synchronization
-    fetch('/api/payments', {
+    fetch(getApiUrl('/api/payments'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tx: newTx })
@@ -4528,7 +4529,7 @@ export default function App() {
         playSound('wrong');
 
         try {
-          await fetch('/api/users/ban', {
+          await fetch(getApiUrl('/api/users/ban'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: cleanEmail })
@@ -4547,7 +4548,7 @@ export default function App() {
       playSound('finish');
 
       try {
-        await fetch('/api/users/unban', {
+        await fetch(getApiUrl('/api/users/unban'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: cleanEmail })
@@ -4570,7 +4571,7 @@ export default function App() {
       }
 
       try {
-        await fetch('/api/payments/status', {
+        await fetch(getApiUrl('/api/payments/status'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: txId, status })

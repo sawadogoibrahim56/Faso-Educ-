@@ -1,4 +1,5 @@
 import { Question, QuizSettings, Level } from "../types";
+import { getApiUrl } from "../lib/api";
 
 export async function generateQuizQuestions(
   subjects: string[],
@@ -6,7 +7,7 @@ export async function generateQuizQuestions(
   excludeQuestions: string[] = []
 ): Promise<Question[]> {
   try {
-    const response = await fetch("/api/gemini/quiz", {
+    const response = await fetch(getApiUrl("/api/gemini/quiz"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -39,7 +40,7 @@ export async function generateCourse(
   chapters: { title: string; content: string }[];
 }> {
   try {
-    const response = await fetch("/api/gemini/course", {
+    const response = await fetch(getApiUrl("/api/gemini/course"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -66,7 +67,7 @@ export async function generateForumAIResponse(
   postContent: string
 ): Promise<string> {
   try {
-    const response = await fetch("/api/gemini/forum", {
+    const response = await fetch(getApiUrl("/api/gemini/forum"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
