@@ -134,6 +134,176 @@ export default function App() {
     };
   });
 
+  // Full-Stack Synchronization & Admin Security States
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => {
+    return localStorage.getItem('faso_educ_admin_unlocked') === 'true';
+  });
+  const [adminInputEmail, setAdminInputEmail] = useState('');
+  const [adminInputPasscode, setAdminInputPasscode] = useState('');
+  const [adminUnlockError, setAdminUnlockError] = useState<string | null>(null);
+  const [bannedEmails, setBannedEmails] = useState<string[]>([]);
+  const [backendSyncStatus, setBackendSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+  const [paymentCredentials, setPaymentCredentials] = useState<{
+    orange: { num: string; name: string };
+    moov: { num: string; name: string };
+    wave: { num: string; name: string };
+  } | null>(null);
+
+  // Load backend variables and sync state
+  useEffect(() => {
+    let isActive = true;
+    async function initFullStackEngine() {
+      try {
+        setBackendSyncStatus('syncing');
+        // A. Load Supabase configuration if returned by Express backend
+        const configRes = await fetch('/api/supabase-config');
+        if (configRes.ok && isActive) {
+          const config = await configRes.json();
+          if (config.supabaseUrl && config.supabaseAnonKey) {
+            const { initSupabaseClient } = await import('./lib/supabase');
+            initSupabaseClient(config.supabaseUrl, config.supabaseAnonKey);
+            console.log("⚡ Supabase Dynamic connection ready via backend environment.");
+          }
+        }
+
+        // B. Fetch server-side banned list
+        const banRes = await fetch('/api/users/banned');
+        if (banRes.ok && isActive) {
+          const banData = await banRes.json();
+          if (Array.isArray(banData.bannedEmails)) {
+            setBannedEmails(banData.bannedEmails);
+          }
+        }
+
+        // C. Fetch server-side payments to synchronize across Render clients
+        const payRes = await fetch('/api/payments');
+        if (payRes.ok && isActive) {
+          const payData = await payRes.json();
+          if (Array.isArray(payData) && payData.length > 0) {
+            setManualPayments(payData);
+          }
+        }
+
+        // D. Fetch hidden payment operational parameters routing details
+        try {
+          const credsRes = await fetch('/api/payment-credentials');
+          if (credsRes.ok && isActive) {
+            const credsData = await credsRes.json();
+            setPaymentCredentials(credsData);
+          }
+        } catch (e) {
+          console.warn("Could not retrieve server-side payment credentials from parameters.");
+        }
+
+        // E. JWS durable session check
+        let activeEmail = "";
+        const cachedToken = localStorage.getItem('faso_educ_jwt_token');
+        if (cachedToken) {
+          try {
+            const authRes = await fetch('/api/auth/token-sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: cachedToken })
+            });
+            if (authRes.ok) {
+              const authData = await authRes.json();
+              if (authData.registered && authData.profile) {
+                setProfile(authData.profile);
+                activeEmail = authData.profile.email;
+                if (authData.token) {
+                  localStorage.setItem('faso_educ_jwt_token', authData.token);
+                }
+                console.log("🔒 Durable Session Authenticated via JWS Token:", activeEmail);
+              }
+            }
+          } catch (e) {
+            console.error("Token session sync error on load:", e);
+          }
+        }
+
+        if (!activeEmail) {
+          const localProf = localStorage.getItem('faso_educ_user_profile');
+          if (localProf) {
+            try {
+              const parsed = JSON.parse(localProf);
+              if (parsed.email) activeEmail = parsed.email;
+            } catch (e) { /* ignore */ }
+          }
+        }
+
+        // F. Sync courses and quiz history
+        if (activeEmail && isActive) {
+          try {
+            const coursesRes = await fetch(`/api/courses?email=${encodeURIComponent(activeEmail)}`);
+            if (coursesRes.ok) {
+              const coursesData = await coursesRes.json();
+              if (Array.isArray(coursesData) && coursesData.length > 0) {
+                setGeneratedCourses(coursesData);
+              }
+            }
+          } catch (e) {
+            console.warn("Could not retrieve synchronized courses list:", e);
+          }
+
+          try {
+            const historyRes = await fetch(`/api/history?email=${encodeURIComponent(activeEmail)}`);
+            if (historyRes.ok) {
+              const historyData = await historyRes.json();
+              if (Array.isArray(historyData) && historyData.length > 0) {
+                setHistory(historyData);
+              }
+            }
+          } catch (e) {
+            console.warn("Could not retrieve synchronized quiz results history:", e);
+          }
+        }
+
+        if (isActive) setBackendSyncStatus('synced');
+      } catch (err) {
+        console.warn("⚠️ Standard offline container active (No full-stack backend).", err);
+        if (isActive) setBackendSyncStatus('error');
+      }
+    }
+    initFullStackEngine();
+    return () => { isActive = false; };
+  }, []);
+
+  // Profile Server Synchronization Hook
+  useEffect(() => {
+    if (!profile.email || !profile.registered) return;
+    let isActive = true;
+
+    async function syncProfileWithBackend() {
+      try {
+        const res = await fetch(`/api/profiles/${encodeURIComponent(profile.email)}`);
+        if (res.ok && isActive) {
+          const serverProf = await res.json();
+          if (serverProf && serverProf.registered) {
+            setProfile(prev => ({
+              ...prev,
+              name: serverProf.name || prev.name,
+              level: serverProf.level || prev.level,
+              isPremium: !!serverProf.isPremium,
+              registered: true
+            }));
+          }
+        }
+
+        // Send active properties to save on backend
+        await fetch('/api/profiles/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profile)
+        });
+      } catch (err) {
+        console.warn("Syncing fallback local profile mode active.", err);
+      }
+    }
+    
+    syncProfileWithBackend();
+    return () => { isActive = false; };
+  }, [profile.email, profile.registered]);
+
   // Persist Profile
   useEffect(() => {
     localStorage.setItem('faso_educ_user_profile', JSON.stringify(profile));
@@ -213,10 +383,24 @@ export default function App() {
     }
   });
 
-  // Persist generated courses
+  // Persist generated courses and sync to the backend
   useEffect(() => {
     localStorage.setItem('faso_educ_generated_courses', JSON.stringify(generatedCourses));
-  }, [generatedCourses]);
+    if (profile.registered && profile.email && generatedCourses.length > 0) {
+      generatedCourses.forEach(course => {
+        fetch('/api/courses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            course: {
+              ...course,
+              userEmail: profile.email
+            }
+          })
+        }).catch(err => console.error("Error syncing custom course:", err));
+      });
+    }
+  }, [generatedCourses, profile.email, profile.registered]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentQuiz, setCurrentQuiz] = useState<{
     id: string;
@@ -278,10 +462,24 @@ export default function App() {
     }
   }, [settings]);
 
-  // Persist History
+  // Persist History and sync to the backend
   useEffect(() => {
     localStorage.setItem('faso_educ_history', JSON.stringify(history));
-  }, [history]);
+    if (profile.registered && profile.email && history.length > 0) {
+      history.forEach(result => {
+        fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            result: {
+              ...result,
+              userEmail: profile.email
+            }
+          })
+        }).catch(err => console.error("Error syncing quiz history:", err));
+      });
+    }
+  }, [history, profile.email, profile.registered]);
 
   // Timer Logic
   useEffect(() => {
@@ -2271,7 +2469,7 @@ export default function App() {
 
   // Admin access state
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails'>('transactions');
+  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails' | 'banList'>('transactions');
   const [paymentAlertMessage, setPaymentAlertMessage] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -2483,6 +2681,18 @@ export default function App() {
     };
 
     setManualPayments(prev => [newTx, ...prev]);
+    
+    // Server synchronization
+    fetch('/api/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx: newTx })
+    }).then(res => {
+      if (!res.ok) console.warn("Could not synchronize payment declaration on server.");
+    }).catch(err => {
+      console.warn("Server connection offline for payment sync:", err);
+    });
+
     playSound('finish');
     setCheckoutStep('manual_confirmation');
   };
@@ -3945,14 +4155,14 @@ export default function App() {
               <div className="p-3 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-xl flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-orange-400 block">Orange Money</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: Ibrahim Sawadogo</span>
+                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Ibrahim Sawadogo"}</span>
                   <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    +226 76 00 11 22
+                    {paymentCredentials?.orange?.num || "+226 76 00 11 22"}
                   </code>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopyText('76001122', 'orange')}
+                  onClick={() => handleCopyText((paymentCredentials?.orange?.num || "76001122").replace(/\D/g, ''), 'orange')}
                   className="mt-3.5 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                 >
                   {copiedText === 'orange' ? "Copié ✓" : (
@@ -3968,14 +4178,14 @@ export default function App() {
               <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Moov Money</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: Ibrahim Sawadogo</span>
+                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Ibrahim Sawadogo"}</span>
                   <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    +226 60 44 55 66
+                    {paymentCredentials?.moov?.num || "+226 60 44 55 66"}
                   </code>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopyText('60445566', 'moov')}
+                  onClick={() => handleCopyText((paymentCredentials?.moov?.num || "60445566").replace(/\D/g, ''), 'moov')}
                   className="mt-3.5 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                 >
                   {copiedText === 'moov' ? "Copié ✓" : (
@@ -3991,14 +4201,14 @@ export default function App() {
               <div className="p-3 bg-sky-500/5 dark:bg-sky-500/10 border border-sky-500/20 rounded-xl flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 block">Wave Transfer</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: Ibrahim Sawadogo</span>
+                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Ibrahim Sawadogo"}</span>
                   <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    +226 55 88 99 00
+                    {paymentCredentials?.wave?.num || "+226 55 88 99 00"}
                   </code>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopyText('55889900', 'wave')}
+                  onClick={() => handleCopyText((paymentCredentials?.wave?.num || "55889900").replace(/\D/g, ''), 'wave')}
                   className="mt-3.5 py-1.5 px-3 bg-sky-500 hover:bg-sky-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                 >
                   {copiedText === 'wave' ? "Copié ✓" : (
@@ -4198,13 +4408,13 @@ export default function App() {
                       <span className="text-[9px] text-gray-400 font-bold block uppercase tracking-wider">Montant et ID de transac</span>
                       <strong className="text-amber-600 dark:text-amber-300 font-black text-sm">{tx.amount} FCFA</strong> • <code className="bg-gray-100 dark:bg-slate-950 border dark:border-transparent px-1.5 py-0.5 rounded text-faso-blue font-bold">{tx.reference}</code>
                     </div>
-                    <div className="text-[10px] text-gray-400 dark:text-gray-500 pt-2 font-light">
+                    <div className="text-[10px] text-gray-400 dark:text-gray-500 pt-2 font-light text-left">
                       Date déclaration : {safeFormatDate(tx.date, true)}
                     </div>
                   </div>
 
                   {tx.status === 'pending' && (
-                    <div className="mt-3.5 pt-2.5 border-t border-gray-100 dark:border-slate-800/80 text-[10px] text-indigo-505 dark:text-indigo-405 font-bold bg-indigo-500/5 p-2 rounded-lg leading-relaxed">
+                    <div className="mt-3.5 pt-2.5 border-t border-gray-100 dark:border-slate-800/80 text-[10px] text-indigo-500 dark:text-indigo-400 font-bold bg-indigo-500/5 p-2 rounded-lg leading-relaxed text-left">
                       💡 <strong>Raccourci Démo :</strong> Ouvrez l'espace <strong>🛠️ Admin</strong> en haut à droite du header principal pour confirmer/approuver ce dépôt !
                     </div>
                   )}
@@ -4218,6 +4428,158 @@ export default function App() {
   };
 
   const renderAdminModal = () => {
+    // If Admin is locked, show a highly secure login panel
+    if (!isAdminUnlocked) {
+      const handleAdminUnlockSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const emailClean = adminInputEmail.trim().toLowerCase();
+        const codeClean = adminInputPasscode.trim();
+
+        if (emailClean === 'ibrahimsawadogo36@gmail.com' && codeClean === 'IBRAHIM_FASO_2026') {
+          setIsAdminUnlocked(true);
+          setAdminUnlockError(null);
+          localStorage.setItem('faso_educ_admin_unlocked', 'true');
+          playSound('finish');
+        } else {
+          setAdminUnlockError("Identifiants ou code d'activation réseau incorrect. Accès refusé.");
+          playSound('wrong');
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-slate-950/95 flex items-center justify-center z-50 p-4 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-violet-500/30 rounded-3xl overflow-hidden shadow-2xl p-8 relative space-y-6">
+            <button 
+              onClick={() => setShowAdminModal(false)}
+              className="absolute top-4 right-4 p-2 hover:bg-slate-800 rounded-full text-gray-400 transition-colors cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="text-center space-y-3">
+              <div className="w-16 h-16 bg-violet-600/10 border border-violet-500/30 text-violet-400 rounded-full flex items-center justify-center text-3xl mx-auto shadow-lg">
+                🔐
+              </div>
+              <h3 className="text-xl font-black bg-gradient-to-r from-violet-400 via-indigo-300 to-fuchsia-400 bg-clip-text text-transparent">
+                Administration Réseau
+              </h3>
+              <p className="text-xs text-gray-400 leading-normal font-medium max-w-xs mx-auto">
+                Espace privé réservé exclusivement à l'administrateur de <strong>Faso Educ</strong> pour l'activation manuelle des privilèges.
+              </p>
+            </div>
+
+            <form onSubmit={handleAdminUnlockSubmit} className="space-y-4 text-start">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-gray-400 tracking-wider mb-1">
+                  Email Administrateur
+                </label>
+                <input 
+                  type="email" 
+                  required
+                  placeholder="ibrahimsawadogo36@gmail.com"
+                  value={adminInputEmail}
+                  onChange={(e) => setAdminInputEmail(e.target.value)}
+                  className="w-full p-3.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-violet-500 text-xs outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-gray-400 tracking-wider mb-1">
+                  Clé Réseau Confidentielle (Code)
+                </label>
+                <input 
+                  type="password" 
+                  required
+                  placeholder="Mot de passe d'usine"
+                  value={adminInputPasscode}
+                  onChange={(e) => setAdminInputPasscode(e.target.value)}
+                  className="w-full p-3.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-violet-500 text-xs outline-none font-mono"
+                />
+              </div>
+
+              {adminUnlockError && (
+                <p className="text-[11px] text-red-400 font-bold bg-red-500/10 border border-red-500/20 p-3 rounded-xl">
+                  {adminUnlockError}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-4 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-extrabold uppercase text-xs tracking-wider rounded-xl cursor-pointer hover:scale-[1.01] transition-all shadow-md"
+              >
+                Vérifier & Ouvrir le Portail ✔
+              </button>
+            </form>
+            
+            <div className="pt-2 text-center text-[9px] text-gray-500 tracking-wide leading-normal">
+              Note : Seul Ibrahim en tant que gérant peut valider ou suspendre les comptes étudiants de la plateforme depuis le serveur Render.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const handleBanAction = async (emailToBan: string) => {
+      const cleanEmail = emailToBan.trim().toLowerCase();
+      if (!cleanEmail) return;
+
+      if (confirm(`Voulez-vous vraiment suspendre / bannir définitivement le candidat ${cleanEmail} ?`)) {
+        setBannedEmails(prev => Array.from(new Set([...prev, cleanEmail])));
+        playSound('wrong');
+
+        try {
+          await fetch('/api/users/ban', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: cleanEmail })
+          });
+        } catch (e) {
+          console.warn("Offline fallback for banning registered:", e);
+        }
+      }
+    };
+
+    const handleUnbanAction = async (emailToUnban: string) => {
+      const cleanEmail = emailToUnban.trim().toLowerCase();
+      if (!cleanEmail) return;
+
+      setBannedEmails(prev => prev.filter(e => e !== cleanEmail));
+      playSound('finish');
+
+      try {
+        await fetch('/api/users/unban', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail })
+        });
+      } catch (e) {
+        console.warn("Offline fallback for unbanning registered:", e);
+      }
+    };
+
+    const handleTransactionStatusUpdate = async (txId: string, status: 'approved' | 'rejected', userEmail?: string) => {
+      setManualPayments(prev => prev.map(p => p.id === txId ? { ...p, status } : p));
+      
+      if (status === 'approved' && userEmail) {
+        if (profile.email.toLowerCase() === userEmail.toLowerCase()) {
+          setProfile(prev => ({ ...prev, isPremium: true }));
+        }
+        playSound('finish');
+      } else {
+        playSound('wrong');
+      }
+
+      try {
+        await fetch('/api/payments/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: txId, status })
+        });
+      } catch (err) {
+        console.warn("Status transmission error:", err);
+      }
+    };
+
     return (
       <div className="fixed inset-0 bg-slate-950/90 flex items-center justify-center z-50 p-4 backdrop-blur-md">
         <div className="w-full max-w-2xl bg-slate-900 border border-violet-500/30 rounded-3xl overflow-hidden shadow-2xl text-left text-white flex flex-col max-h-[90vh]">
@@ -4230,31 +4592,45 @@ export default function App() {
               </div>
               <div>
                 <h3 className="text-lg font-black bg-gradient-to-r from-violet-400 via-indigo-400 to-fuchsia-400 bg-clip-text text-transparent">
-                  Administration Faso Educ
+                  Administration Faso Educ Actif
                 </h3>
                 <p className="text-[10px] text-gray-400 mt-0.5">
-                  Simulateur de validation et portail d'administration des abonnements de candidats
+                  Simulateur cloud connecté à Supabase • Rôle : Gérant Ibrahim Sawadogo
                 </p>
               </div>
             </div>
             
-            <button 
-              onClick={() => setShowAdminModal(false)}
-              className="p-2 hover:bg-slate-800 rounded-full text-gray-400 transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  setIsAdminUnlocked(false);
+                  localStorage.removeItem('faso_educ_admin_unlocked');
+                  setShowAdminModal(false);
+                  playSound('wrong');
+                }}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-gray-400 hover:text-white font-bold text-[9px] uppercase cursor-pointer transition-colors"
+                title="Verrouiller le portail"
+              >
+                🔐 Retirer Clé
+              </button>
+              <button 
+                onClick={() => setShowAdminModal(false)}
+                className="p-2 hover:bg-slate-800 rounded-full text-gray-400 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
           </div>
 
           {/* Tab bar Selector */}
-          <div className="px-6 pt-3 bg-slate-950/60 border-b border-slate-800 shrink-0 flex gap-2">
+          <div className="px-6 pt-3 bg-slate-950/60 border-b border-slate-800 shrink-0 flex gap-1.5 overflow-x-auto select-none no-scrollbar">
             <button
               onClick={() => {
                 setAdminModalTab('transactions');
                 playSound('correct');
               }}
               className={cn(
-                "px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer",
+                "px-3 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap",
                 adminModalTab === 'transactions' ? "border-violet-500 text-violet-400" : "border-transparent text-gray-400 hover:text-white"
               )}
             >
@@ -4266,14 +4642,26 @@ export default function App() {
                 playSound('correct');
               }}
               className={cn(
-                "px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5",
+                "px-3 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap",
                 adminModalTab === 'emails' ? "border-violet-500 text-violet-400" : "border-transparent text-gray-400 hover:text-white"
               )}
             >
-              📧 Boîte de Réception (Emails reçus)
+              📧 Boîte de Réception
               {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
               )}
+            </button>
+            <button
+              onClick={() => {
+                setAdminModalTab('banList');
+                playSound('correct');
+              }}
+              className={cn(
+                "px-3 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap",
+                adminModalTab === 'banList' ? "border-violet-500 text-violet-400" : "border-transparent text-gray-400 hover:text-white"
+              )}
+            >
+              🚫 Bannissements ({bannedEmails.length})
             </button>
           </div>
 
@@ -4319,53 +4707,61 @@ export default function App() {
                         {/* Transaction status float */}
                         <div className="absolute top-4 right-4 text-[10px] font-black uppercase">
                           {tx.status === 'pending' && <span className="text-amber-500 bg-amber-500/15 px-2.5 py-1 rounded-md">🔴 En attente</span>}
-                          {tx.status === 'approved' && <span className="text-faso-green bg-faso-green/15 px-2.5 py-1 rounded-md mb-2 block">✅ Validé (Premium Actif)</span>}
-                          {tx.status === 'rejected' && <span className="text-red-450 bg-red-400/15 px-2.5 py-1 rounded-md">❌ Rejeté</span>}
+                          {tx.status === 'approved' && <span className="text-faso-green bg-faso-green/15 px-2.5 py-1 rounded-md mb-2 block text-center">✅ Validé</span>}
+                          {tx.status === 'rejected' && <span className="text-red-400 bg-red-400/15 px-2.5 py-1 rounded-md text-center block">❌ Rejeté</span>}
                         </div>
 
                         <div className="space-y-1.5 text-left max-w-[70%] text-sky-100">
                           <div>
                             <span className="text-[10px] text-gray-400 block">Candidat :</span>
-                            <span className="font-extrabold text-white">{tx.userName}</span> ({tx.userEmail})
+                            <span className="font-extrabold text-white text-xs">{tx.userName}</span> ({tx.userEmail})
                           </div>
                           <div className="pt-1">
                             <span className="text-[10px] text-gray-400 block">Détails Dépôt Manuel :</span>
-                            <span className="font-bold text-gray-200 uppercase">{tx.operator} Money</span> • {tx.phone}
+                            <span className="font-bold text-gray-205 uppercase">{tx.operator} Money</span> • {tx.phone}
                           </div>
                           <div>
                             <span className="text-[10px] text-gray-400 block">Montant / Référence :</span>
-                            <strong className="text-amber-300 font-black text-sm">{tx.amount} FCFA</strong> • <code className="bg-slate-900 border border-slate-805 px-1.5 py-0.5 rounded text-faso-blue font-bold">{tx.reference}</code>
+                            <strong className="text-amber-300 font-black text-sm">{tx.amount} FCFA</strong> • <code className="bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded text-faso-blue font-bold">{tx.reference}</code>
                           </div>
                           <div className="text-[9px] text-gray-500 pt-1">
                             Soumis le : {safeFormatDate(tx.date)}
                           </div>
                         </div>
 
-                        {tx.status === 'pending' && (
-                          <div className="mt-4 pt-3 border-t border-slate-800 flex gap-2 justify-end">
+                        <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap gap-2 justify-end">
+                          {/* Ban directly from transaction tab option */}
+                          {!bannedEmails.includes(tx.userEmail.trim().toLowerCase()) ? (
                             <button
-                              onClick={() => {
-                                // Reject
-                                setManualPayments(prev => prev.map(p => p.id === tx.id ? { ...p, status: 'rejected' } : p));
-                                playSound('wrong');
-                              }}
-                              className="px-3 py-1.5 bg-slate-950 text-rose-455 border border-rose-500/20 rounded-lg text-[10px] font-bold hover:bg-rose-500/10 cursor-pointer"
+                              type="button"
+                              onClick={() => handleBanAction(tx.userEmail)}
+                              className="px-2.5 py-1.5 bg-slate-950 text-red-400 hover:bg-red-500/10 border border-red-500/10 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
                             >
-                              Rejeter
+                              🚫 Bannir Candidat
                             </button>
-                            <button
-                              onClick={() => {
-                                // Validate / Approve
-                                setManualPayments(prev => prev.map(p => p.id === tx.id ? { ...p, status: 'approved' } : p));
-                                playSound('finish');
-                                setProfile(prev => ({ ...prev, isPremium: true }));
-                              }}
-                              className="px-4 py-1.5 bg-gradient-to-r from-faso-green to-emerald-500 text-slate-950 font-black rounded-lg text-[10px] hover:scale-[1.01] cursor-pointer"
-                            >
-                              Valider & Activer Premium ✔
-                            </button>
-                          </div>
-                        )}
+                          ) : (
+                            <span className="text-red-500 bg-red-500/10 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider">
+                              Suspension Active 🔒
+                            </span>
+                          )}
+
+                          {tx.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => handleTransactionStatusUpdate(tx.id, 'rejected')}
+                                className="px-3 py-1.5 bg-slate-950 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold hover:bg-rose-500/10 cursor-pointer"
+                              >
+                                Rejeter
+                              </button>
+                              <button
+                                onClick={() => handleTransactionStatusUpdate(tx.id, 'approved', tx.userEmail)}
+                                className="px-4 py-1.5 bg-gradient-to-r from-faso-green to-emerald-500 text-slate-950 font-black rounded-lg text-[10px] hover:scale-[1.01] cursor-pointer"
+                              >
+                                Valider & Activer Premium ✔
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -4400,11 +4796,11 @@ export default function App() {
                             <span className="text-gray-400 font-mono">system@faso-educ.net</span>
                           </div>
                           <div className="flex justify-between items-center border-t border-slate-800/50 pt-1.5">
-                            <span className="font-bold text-gray-305">À :</span>
+                            <span className="font-bold text-gray-300">À :</span>
                             <span className="text-faso-green font-mono">ibrahimsawadogo36@gmail.com</span>
                           </div>
                           <div className="flex justify-between items-center border-t border-slate-800/50 pt-1.5">
-                            <span className="font-bold text-gray-305">Objet :</span>
+                            <span className="font-bold text-gray-300">Objet :</span>
                             <span className="text-white font-black">🔔 [ADMIN ACTION] Nouveau dépôt manuel de {tx.userName} à valider</span>
                           </div>
                           <div className="text-[10px] text-gray-500 text-right mt-1">
@@ -4421,8 +4817,8 @@ export default function App() {
                             Un candidat vient de soumettre une preuve de transfert d'argent mobile pour valider son forfait <strong>{tx.amount === 2500 ? 'Mensuel' : 'Annuel'}</strong>.
                           </p>
 
-                          <div className="bg-slate-905/60 border border-slate-800 p-4 rounded-xl space-y-2 text-slate-300">
-                            <p className="text-xs font-bold border-b border-slate-800 pb-1.5 text-violet-400 uppercase tracking-wider">
+                          <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl space-y-2 text-slate-300">
+                            <p className="text-xs font-bold border-b border-slate-805 pb-1.5 text-violet-400 uppercase tracking-wider">
                               📋 Récépissé de règlement :
                             </p>
                             <p>🧑‍💻 <strong>Candidat :</strong> {tx.userName} ({tx.userEmail})</p>
@@ -4435,12 +4831,7 @@ export default function App() {
                           <div className="py-2">
                             <button
                               type="button"
-                              onClick={() => {
-                                // Approve from simulated email
-                                setManualPayments(prev => prev.map(p => p.id === tx.id ? { ...p, status: 'approved' } : p));
-                                playSound('finish');
-                                setProfile(prev => ({ ...prev, isPremium: true }));
-                              }}
+                              onClick={() => handleTransactionStatusUpdate(tx.id, 'approved', tx.userEmail)}
                               className="w-full py-3.5 bg-gradient-to-r from-faso-green to-emerald-500 text-slate-950 font-black uppercase text-xs rounded-xl hover:scale-[1.01] transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg"
                             >
                               <span>✔ Valider l'accès de ce profil</span>
@@ -4450,16 +4841,75 @@ export default function App() {
                             </p>
                           </div>
 
-                          <div className="border-t border-slate-850 pt-4 text-gray-500 text-[11px]">
+                          <div className="border-t border-slate-800 pt-4 text-gray-500 text-[11px]">
                             Cordialement,<br />
                             <strong>L'équipe d'Automatisation Faso-Educ Net</strong>
                           </div>
                         </div>
-
                       </div>
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {adminModalTab === 'banList' && (
+              <div className="space-y-4">
+                <div className="bg-slate-950/60 border border-red-500/20 rounded-2xl p-4 text-xs text-slate-300 space-y-1.5">
+                  <p className="font-black text-red-400 uppercase">🛡️ Gestion de sécurité & Suspensions</p>
+                  <p className="text-gray-400 text-[11px] leading-relaxed">
+                    Les candidats figurant sur cette liste sont immédiatement bloqués lors de leur authentification au service Faso Educ. Pratique en cas de faux reçus de mobile money ou de spams frauduleux sur le forum.
+                  </p>
+                </div>
+
+                {/* Form to ban manually */}
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const input = (e.currentTarget.elements.namedItem('banEmail') as HTMLInputElement);
+                    const val = input.value.trim();
+                    if (val) {
+                      handleBanAction(val);
+                      input.value = '';
+                    }
+                  }}
+                  className="flex gap-2"
+                >
+                  <input 
+                    name="banEmail"
+                    type="email" 
+                    required 
+                    placeholder="Saisir l'e-mail du candidat à bannir (ex. fraudeur@domain.com)"
+                    className="flex-1 p-3 bg-slate-950 text-white border border-slate-800 focus:border-red-500 text-xs rounded-xl outline-none text-left"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold uppercase text-[10px] tracking-wider rounded-xl cursor-pointer"
+                  >
+                    🚫 Bannir l'adresse
+                  </button>
+                </form>
+
+                <div className="space-y-2 pt-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-start">Comptes actuellement suspendus ({bannedEmails.length}) :</p>
+                  {bannedEmails.length === 0 ? (
+                    <p className="text-xs text-gray-500 italic py-4 text-center border border-dashed border-slate-800 rounded-2xl">Aucun utilisateur banni pour le moment. Félicitations pour la probité des bénéficiaires !</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {bannedEmails.map(bEmail => (
+                        <div key={bEmail} className="flex items-center justify-between p-3.5 bg-slate-950 border border-slate-805 rounded-xl font-mono text-xs">
+                          <span className="text-red-300 font-bold">{bEmail}</span>
+                          <button
+                            onClick={() => handleUnbanAction(bEmail)}
+                            className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/30 text-faso-green rounded-lg text-[10px] font-black uppercase cursor-pointer"
+                          >
+                            🔓 Réhabiliter (Débannir)
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
