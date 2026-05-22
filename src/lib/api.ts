@@ -18,8 +18,25 @@ export function getApiUrl(path: string): string {
     return `${base}${cleanPath}`;
   }
 
-  // Otherwise, use a simple relative path. It is ultra-robust because the browser
-  // automatically resolves this against the exact window.location.origin
-  // (the actual URL of the application, in development, in AI Studio, or in production).
+  // Safe checks in browser contexts to connect frontend and backend correctly
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+
+    // 1. If running on the Render Frontend domain, send all API requests to the Render Backend domain
+    if (hostname.includes('faso-educ-frontend.onrender.com')) {
+      return `https://faso-educ-backend.onrender.com${cleanPath}`;
+    }
+
+    // 2. If running inside local or containerized visual sandboxes (like AI Studio previews on run.app),
+    // we use a relative path. The container router handles routing to the integrated backend.
+    if (hostname.includes('run.app') || hostname === 'localhost' || hostname === '127.0.0.1') {
+      return cleanPath;
+    }
+
+    // 3. Fallback for any other custom static site domains to direct to the production backend
+    return `https://faso-educ-backend.onrender.com${cleanPath}`;
+  }
+
   return cleanPath;
 }
+
