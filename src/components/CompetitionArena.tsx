@@ -287,7 +287,8 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
   const copySimulatedLink = () => {
     setCopiedLink(true);
-    navigator.clipboard?.writeText?.(`https://ais-dev-fasoeduc.run.app/lobby/competition-${roomNumber}`);
+    const domain = typeof window !== 'undefined' ? window.location.origin : "https://faso-educ-frontend.onrender.com";
+    navigator.clipboard?.writeText?.(`${domain}/lobby/competition-${roomNumber}`);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 

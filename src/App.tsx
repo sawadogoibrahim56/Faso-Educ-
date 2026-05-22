@@ -2972,15 +2972,15 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2 pt-1">
                       <div className="flex justify-between items-center p-2 rounded-lg bg-orange-500/10 border border-orange-500/30">
                         <span className="font-bold text-orange-400">Orange Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">+226 76 00 11 22</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.orange?.num || "+226 76 00 11 22"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
                         <span className="font-bold text-indigo-400">Moov Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">+226 60 44 55 66</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.moov?.num || "+226 60 44 55 66"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-sky-500/10 border border-sky-500/30">
                         <span className="font-bold text-sky-400">Wave Cash :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">+226 55 88 99 00</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.wave?.num || "+226 55 88 99 00"}</code>
                       </div>
                     </div>
                     <p className="text-[10px] text-gray-400 italic mt-1.5">

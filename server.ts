@@ -770,15 +770,15 @@ app.get("/api/payment-credentials", (req, res) => {
   res.json({
     orange: {
       num: process.env.PAYMENT_NUM_ORANGE || "+226 76 00 11 22",
-      name: "Ibrahim Sawadogo"
+      name: process.env.PAYMENT_NAME_ORANGE || process.env.ADMIN_NAME || "Ibrahim Sawadogo"
     },
     moov: {
       num: process.env.PAYMENT_NUM_MOOV || "+226 60 44 55 66",
-      name: "Ibrahim Sawadogo"
+      name: process.env.PAYMENT_NAME_MOOV || process.env.ADMIN_NAME || "Ibrahim Sawadogo"
     },
     wave: {
       num: process.env.PAYMENT_NUM_WAVE || "+226 55 88 99 00",
-      name: "Ibrahim Sawadogo"
+      name: process.env.PAYMENT_NAME_WAVE || process.env.ADMIN_NAME || "Ibrahim Sawadogo"
     }
   });
 });

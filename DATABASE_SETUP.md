@@ -55,6 +55,33 @@ CREATE TABLE IF NOT EXISTS public.favorited_questions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 4. Table des cours générés et sauvegardés
+CREATE TABLE IF NOT EXISTS public.courses (
+    id TEXT PRIMARY KEY,
+    user_email TEXT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    chapters TEXT NOT NULL, -- Stocke le JSON des chapitres
+    level TEXT NOT NULL,
+    is_public BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5. Table des résultats et historisation des entrainements/concours
+CREATE TABLE IF NOT EXISTS public.quiz_results (
+    id TEXT PRIMARY KEY,
+    user_email TEXT NOT NULL,
+    subjects TEXT[] NOT NULL,
+    level TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    total_questions INTEGER NOT NULL,
+    percentage INTEGER NOT NULL,
+    questions TEXT NOT NULL, -- Stocke le JSON des questions répondues
+    mode TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- Créez des règles de sécurité basiques (RLS) ou laissez en mode public-permit pour commencer simple.
 ```
 
