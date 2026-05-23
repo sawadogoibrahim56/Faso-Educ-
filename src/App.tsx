@@ -35,7 +35,10 @@ import {
   Trash2,
   Edit3,
   Award,
-  User
+  User,
+  Key,
+  Lock,
+  LogOut
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Level, Difficulty, QuizMode, Question, QuizSettings, QuizResult, CourseData, ForumPost, ForumReply, UserProfile, ManualPaymentTx } from './types';
@@ -285,6 +288,7 @@ export default function App() {
               name: serverProf.name || prev.name,
               level: serverProf.level || prev.level,
               isPremium: !!serverProf.isPremium,
+              password: serverProf.password || prev.password,
               registered: true
             }));
           }
@@ -2321,31 +2325,126 @@ export default function App() {
     );
   };
 
+  const [authMode, setAuthMode] = useState<'register' | 'login'>('register');
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('123456');
   const [regLevel, setRegLevel] = useState<Level>('Licence');
   const [regSimTime, setRegSimTime] = useState<'normal' | 'expired'>('normal');
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  // States for changing password in profile space
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [passError, setPassError] = useState<string | null>(null);
+  const [passSuccess, setPassSuccess] = useState<string | null>(null);
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim()) return;
+    if (!regName.trim() || !regEmail.trim() || !regPassword.trim()) return;
+    setAuthError(null);
 
     const date = new Date();
     if (regSimTime === 'expired') {
       date.setDate(date.getDate() - 8);
     }
     
-    setProfile({
+    // Check if profile already exists in backend/localStorage
+    try {
+      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}`));
+      if (res.ok) {
+        const existingProf = await res.json();
+        if (existingProf && existingProf.registered) {
+          setAuthError("Cet email est déjà enregistré ! Veuillez utiliser l'onglet de connexion.");
+          playSound('wrong');
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Offline check during registration:", err);
+    }
+
+    const newProfile: UserProfile = {
       registered: true,
       name: regName.trim(),
-      email: regEmail.trim(),
+      email: regEmail.trim().toLowerCase(),
       level: regLevel,
       registrationDate: date.toISOString(),
       isPremium: false,
-      simulatedTimeShiftDays: 0
-    });
+      simulatedTimeShiftDays: 0,
+      password: regPassword.trim(),
+      avatar: '👨‍🎓',
+      learningStreak: 1,
+      points: 100,
+      targetExam: 'Inspecteur des Douanes',
+      regionName: 'Centre (Ouagadougou)'
+    };
 
+    setProfile(newProfile);
     playSound('finish');
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regEmail.trim() || !regPassword.trim()) return;
+    setAuthError(null);
+
+    try {
+      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}`));
+      if (res.ok) {
+        const existingProf = await res.json();
+        if (existingProf && existingProf.registered) {
+          const serverPass = existingProf.password || '123456';
+          if (serverPass === regPassword.trim()) {
+            setProfile({
+              registered: true,
+              name: existingProf.name || 'Candidat Élite',
+              email: existingProf.email,
+              level: existingProf.level || 'Licence',
+              registrationDate: existingProf.registrationDate || new Date().toISOString(),
+              isPremium: !!existingProf.isPremium,
+              simulatedTimeShiftDays: existingProf.simulatedTimeShiftDays || 0,
+              avatar: existingProf.avatar || '👨‍🎓',
+              learningStreak: existingProf.learningStreak || 5,
+              points: existingProf.points || 120,
+              targetExam: existingProf.targetExam || 'Concours Direct',
+              regionName: existingProf.regionName || 'Centre (Ouagadougou)',
+              password: serverPass
+            });
+            playSound('finish');
+          } else {
+            setAuthError("Mot de passe incorrect !");
+            playSound('wrong');
+          }
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Offline fallback for login:", err);
+    }
+
+    // Local Storage Fallback
+    const localProfStr = localStorage.getItem('faso_educ_user_profile');
+    if (localProfStr) {
+      try {
+        const lp = JSON.parse(localProfStr);
+        if (lp && lp.email?.toLowerCase() === regEmail.trim().toLowerCase()) {
+          const pass = lp.password || '123456';
+          if (pass === regPassword.trim()) {
+            setProfile({ ...lp, registered: true });
+            playSound('finish');
+            return;
+          } else {
+            setAuthError("Mot de passe incorrect !");
+            playSound('wrong');
+            return;
+          }
+        }
+      } catch (err) { /* ignore */ }
+    }
+
+    setAuthError("Cet email n'est pas enregistré ! Veuillez créer un compte.");
+    playSound('wrong');
   };
 
   const renderRegistration = () => {
@@ -2353,9 +2452,9 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
         <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-faso-green/10 rounded-full filter blur-[100px]" />
         <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-faso-blue/10 rounded-full filter blur-[100px]" />
-
+ 
         <div className="w-full max-w-lg bg-slate-950/80 border border-slate-800 backdrop-blur-xl rounded-2xl p-8 relative z-10 shadow-2xl">
-          <div className="text-center mb-8">
+          <div className="text-center mb-6">
             <div className="w-16 h-16 bg-gradient-to-br from-faso-green to-faso-blue rounded-2xl flex items-center justify-center shadow-md mx-auto mb-4">
               <span className="text-white font-black text-3xl">F</span>
             </div>
@@ -2367,83 +2466,172 @@ export default function App() {
             </p>
           </div>
 
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-xs text-gray-300 space-y-2 leading-relaxed">
-            <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
-              ✨ Votre Port d'Inscription Académique
-            </p>
-            <p className="text-start">
-              Inscrivez-vous instantanément pour bénéficier d'une <strong>période d'essai gratuite de 7 jours</strong>. Accédez à la génération automatique de quiz intelligents, à l'arène de compétition, et aux fiches récapitulatives d'élite.
-            </p>
+          {/* S'enregistrer / Se connecter Switch Tabs */}
+          <div className="flex bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl mb-5">
+            <button
+              type="button"
+              onClick={() => { setAuthMode('register'); setAuthError(null); }}
+              className={cn(
+                "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
+                authMode === 'register' 
+                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
+                  : "text-gray-400 hover:text-white"
+              )}
+            >
+              Créer un compte
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('login'); setAuthError(null); }}
+              className={cn(
+                "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
+                authMode === 'login' 
+                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
+                  : "text-gray-400 hover:text-white"
+              )}
+            >
+              Se connecter
+            </button>
           </div>
 
-          <form onSubmit={handleRegisterSubmit} className="space-y-5 text-start">
-            <div>
-              <label className="block text-xs font-bold text-gray-300 mb-1.5 uppercase tracking-wider">
-                Nom complet
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex. Ibrahim Sawadogo"
-                value={regName}
-                onChange={(e) => setRegName(e.target.value)}
-                className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl focus:border-faso-blue outline-none text-sm text-white"
-              />
+          {authError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold text-center mb-5">
+              ⚠️ {authError}
             </div>
+          )}
 
-            <div>
-              <label className="block text-xs font-bold text-gray-300 mb-1.5 uppercase tracking-wider">
-                Adresse Email
-              </label>
-              <input
-                type="email"
-                required
-                placeholder="votre.nom@compte.com"
-                value={regEmail}
-                onChange={(e) => setRegEmail(e.target.value)}
-                className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl focus:border-faso-blue outline-none text-sm text-white"
-              />
+          {authMode === 'register' ? (
+            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-xs text-gray-300 space-y-2 leading-relaxed">
+              <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
+                ✨ Votre Port d'Inscription Académique
+              </p>
+              <p className="text-start">
+                Inscrivez-vous instantanément pour bénéficier d'une <strong>période d'essai gratuite de 7 jours</strong>. Accédez à la génération automatique de quiz intelligents, à l'arène de compétition, et aux fiches récapitulatives d'élite.
+              </p>
             </div>
+          ) : null}
 
-            <div className="grid grid-cols-2 gap-4">
+          {authMode === 'register' ? (
+            <form onSubmit={handleRegisterSubmit} className="space-y-4 text-start">
               <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1.5 uppercase tracking-wider text-ellipsis overflow-hidden">
-                  Niveau Académique
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Nom complet
                 </label>
-                <select
-                  value={regLevel}
-                  onChange={(e) => setRegLevel(e.target.value as Level)}
-                  className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl focus:border-faso-blue outline-none text-xs text-white"
-                >
-                  <option value="Premier cycle">Premier cycle</option>
-                  <option value="Licence">Licence</option>
-                  <option value="Master">Master</option>
-                  <option value="Doctorat">Doctorat</option>
-                </select>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex. Ibrahim Sawadogo"
+                  value={regName}
+                  onChange={(e) => setRegName(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1.5 uppercase tracking-wider">
-                  Test & Simulation
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Adresse Email
                 </label>
-                <select
-                  value={regSimTime}
-                  onChange={(e) => setRegSimTime(e.target.value as 'normal' | 'expired')}
-                  className="w-full p-4 bg-slate-900 border border-slate-800 rounded-2xl focus:border-faso-blue outline-none text-xs text-amber-400 font-extrabold"
-                >
-                  <option value="normal">Essai actif (7 jours)</option>
-                  <option value="expired">Déjà expiré (8 jours avant)</option>
-                </select>
+                <input
+                  type="email"
+                  required
+                  placeholder="votre.nom@compte.com"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
               </div>
-            </div>
 
-            <button
-              type="submit"
-              className="w-full py-4.5 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-2 cursor-pointer text-sm text-slate-950 font-black uppercase tracking-wider"
-            >
-              Créer mon compte & Débuter l'essai
-            </button>
-          </form>
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Mot de passe sécurisé
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Minimum 6 caractères"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider text-ellipsis overflow-hidden">
+                    Niveau Académique
+                  </label>
+                  <select
+                    value={regLevel}
+                    onChange={(e) => setRegLevel(e.target.value as Level)}
+                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white cursor-pointer"
+                  >
+                    <option value="Premier cycle">Premier cycle</option>
+                    <option value="Licence">Licence</option>
+                    <option value="Master">Master</option>
+                    <option value="Doctorat">Doctorat</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                    Test & Simulation
+                  </label>
+                  <select
+                    value={regSimTime}
+                    onChange={(e) => setRegSimTime(e.target.value as 'normal' | 'expired')}
+                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-amber-400 font-extrabold cursor-pointer"
+                  >
+                    <option value="normal">Essai actif (7j)</option>
+                    <option value="expired">Déjà expiré (démo)</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
+              >
+                Créer mon compte & Débuter l'essai 🚀
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleLoginSubmit} className="space-y-4 text-start">
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Adresse Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="votre.nom@compte.com"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Mot de passe
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Saisissez votre mot de passe"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
+              >
+                Accéder à mon espace candidat 🔑
+              </button>
+            </form>
+          )}
 
           <div className="mt-6 text-center text-[10px] text-gray-500 font-medium">
             En continuant, vous acceptez d'alimenter votre intellect avec notre IA générative d'excellence. Référentiels d'examens officiels du Burkina Faso et de la sous-région UEMOA.
@@ -2460,6 +2648,15 @@ export default function App() {
   const [cardNumber, setCardNumber] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
+
+  // Dual Payment Method Switch states
+  const [activePaymentMode, setActivePaymentMode] = useState<'automatic' | 'manual'>('automatic');
+  const [isProcessingAutoPayment, setIsProcessingAutoPayment] = useState(false);
+  const [autoPaymentError, setAutoPaymentError] = useState<string | null>(null);
+  const [autoPaymentSuccess, setAutoPaymentSuccess] = useState<string | null>(null);
+  const [otpSentTxId, setOtpSentTxId] = useState<string | null>(null);
+  const [paymentOtpCode, setPaymentOtpCode] = useState('');
+  const [showOtpField, setShowOtpField] = useState(false);
 
   // Manual payment states
   const [manualPhone, setManualPhone] = useState('');
@@ -3216,11 +3413,148 @@ export default function App() {
     };
 
     setManualPayments(prev => [newTx, ...prev]);
+    
+    // Server synchronization for permanent record keeping - triggers mail notification
+    fetch(getApiUrl('/api/payments'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx: newTx })
+    }).then(res => {
+      if (!res.ok) console.warn("Could not synchronize manual payment declaration on server.");
+    }).catch(err => {
+      console.warn("Server connection offline for manual payment sync:", err);
+    });
+
     playSound('finish');
     setPaymentAlertMessage("✨ Déclaration enregistrée avec succès ! Votre dépôt manuel est en attente de validation par l'administrateur (Ibrahim Sawadogo). Vous pouvez l'approuver ou le rejeter directement depuis l'onglet raccourci 🛠️ Admin en haut à droite !");
     
     // Clear only transaction reference
     setManualReference('');
+  };
+
+  const handlePageAutoPaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAutoPaymentError(null);
+    setAutoPaymentSuccess(null);
+    setIsProcessingAutoPayment(true);
+    playSound('correct');
+
+    const paymentAmount = selectedPlan === 'monthly' ? 2500 : 15000;
+    const phoneInput = selectedMethod === 'card' ? 'Visa/Mastercard' : paymentPhone;
+
+    if (selectedMethod !== 'card' && !paymentPhone.trim()) {
+      setAutoPaymentError("Veuillez saisir votre numéro de téléphone mobile payeur.");
+      setIsProcessingAutoPayment(false);
+      playSound('wrong');
+      return;
+    }
+
+    // Step 2 Confirm OTP
+    if (showOtpField) {
+      if (!paymentOtpCode.trim()) {
+        setAutoPaymentError("Veuillez saisir le code d'autorisation OTP reçu pour valider le débit direct.");
+        setIsProcessingAutoPayment(false);
+        playSound('wrong');
+        return;
+      }
+
+      try {
+        const response = await fetch(getApiUrl('/api/payments/auto-pay'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userEmail: profile.email || 'candidat@test.bf',
+            userName: profile.name || 'Candidat Elite',
+            plan: selectedPlan,
+            amount: paymentAmount,
+            operator: selectedMethod,
+            phone: phoneInput,
+            otpCode: paymentOtpCode,
+            step: "confirm"
+          })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          setProfile(prev => ({ ...prev, isPremium: true }));
+          setAutoPaymentSuccess(data.message || "⚡ Félicitations ! Votre forfait Elite Premium a été activé automatiquement avec succès ! Accès immédiat.");
+          playSound('finish');
+          setShowOtpField(false);
+          setPaymentOtpCode('');
+          setOtpSentTxId(null);
+          
+          if (data.tx) {
+            setManualPayments(prev => [data.tx, ...prev]);
+          }
+        } else {
+          setAutoPaymentError(data.error || "La validation OTP a échoué. Veuillez vérifier votre code.");
+          playSound('wrong');
+        }
+      } catch (err: any) {
+        console.error(err);
+        setAutoPaymentError("Échec de communication sécurisée avec le serveur de confirmation.");
+        playSound('wrong');
+      } finally {
+        setIsProcessingAutoPayment(false);
+      }
+      return;
+    }
+
+    // Step 1 Initiate Payment
+    try {
+      const response = await fetch(getApiUrl('/api/payments/auto-pay'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userEmail: profile.email || 'candidat@test.bf',
+          userName: profile.name || 'Candidat Elite',
+          plan: selectedPlan,
+          amount: paymentAmount,
+          operator: selectedMethod,
+          phone: phoneInput,
+          step: "initiate"
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "La passerelle de paiement a retourné une erreur.");
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        if (data.otpRequired) {
+          setShowOtpField(true);
+          setOtpSentTxId(data.txId);
+          setAutoPaymentSuccess(data.message || "Initialisation réussie ! Un code OTP est requis pour valider votre débit direct.");
+          playSound('correct');
+        } else if (data.redirectUrl) {
+          setAutoPaymentSuccess("🔄 Initialisation sécurisée réussie ! Vous allez être redirigé vers le portail officiel de paiement Orange Money / Moov Money / Wave.");
+          playSound('finish');
+          setTimeout(() => {
+            window.location.href = data.redirectUrl;
+          }, 2000);
+        } else {
+          setProfile(prev => ({ ...prev, isPremium: true }));
+          setAutoPaymentSuccess("⚡ Félicitations ! Votre forfait Elite Premium a été activé automatiquement avec succès ! Vous disposez désormais de tous les accès.");
+          playSound('finish');
+          if (data.tx) {
+            setManualPayments(prev => [data.tx, ...prev]);
+          }
+        }
+      } else {
+        setAutoPaymentError(data.error || "La transaction a échoué. Veuillez réessayer.");
+        playSound('wrong');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAutoPaymentError(err.message || "Impossible de joindre le gérant de facturation sécurisé.");
+      playSound('wrong');
+    } finally {
+      setIsProcessingAutoPayment(false);
+    }
   };
 
   const handleProfileUpdateSubmit = (e: React.FormEvent) => {
@@ -3234,6 +3568,74 @@ export default function App() {
     }));
     setIsEditingProfile(false);
     playSound('finish');
+  };
+
+  const handlePasswordChangeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassError(null);
+    setPassSuccess(null);
+
+    if (!currentPasswordInput || !newPasswordInput) {
+      setPassError("Veuillez remplir tous les champs.");
+      playSound('wrong');
+      return;
+    }
+
+    if (newPasswordInput.length < 6) {
+      setPassError("Le nouveau mot de passe doit comporter au moins 6 caractères.");
+      playSound('wrong');
+      return;
+    }
+
+    // Verify current password
+    const correctPassword = profile.password || '123456';
+    if (currentPasswordInput !== correctPassword) {
+      setPassError("L'ancien mot de passe est incorrect.");
+      playSound('wrong');
+      return;
+    }
+
+    // Update password in local profile state
+    const updatedProfile = {
+      ...profile,
+      password: newPasswordInput
+    };
+    setProfile(updatedProfile);
+
+    // Save profile to server
+    try {
+      await fetch(getApiUrl('/api/profiles/sync'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProfile)
+      });
+      setPassSuccess("Mot de passe mis à jour avec succès ! Pour votre sécurité, conservez-le précieusement.");
+      playSound('finish');
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+    } catch (err) {
+      console.error(err);
+      setPassError("Erreur lors de l'enregistrement, mais conservé localement.");
+    }
+  };
+
+  const handleLogout = () => {
+    setProfile({
+      email: '',
+      name: '',
+      level: 'Licence',
+      registered: false,
+      trialStartedAt: null,
+      isPremium: false,
+      avatar: '👨‍🎓',
+      regionName: "Centre (Ouagadougou)",
+      targetExam: "Concours Inspecteur de l'UEMOA",
+      password: ''
+    });
+    localStorage.removeItem('faso_educ_user_profile');
+    localStorage.removeItem('faso_educ_jwt_token');
+    setActiveTab('Cours');
+    playSound('correct');
   };
 
   const handleAddCustomVideoSubmit = (e: React.FormEvent) => {
@@ -3572,6 +3974,68 @@ export default function App() {
                     <p className="text-[10px] text-gray-500 leading-relaxed font-light">Vos performances cumulées simulent si vous dépassez la barre d’admissibilité.</p>
                   </div>
                 </div>
+              </div>
+
+              {/* Sécurité credentials / Password Management */}
+              <div className="pt-5 border-t border-slate-200 dark:border-slate-800 space-y-4 text-left">
+                <h4 className="text-xs font-black uppercase text-gray-400 flex items-center gap-1.5">
+                  <Key size={14} className="text-faso-blue" />
+                  <span>Gestion d'identité & Sécurité</span>
+                </h4>
+
+                <form onSubmit={handlePasswordChangeSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Mot de passe actuel</label>
+                    <input
+                      type="password"
+                      placeholder="Ancien mot de passe"
+                      value={currentPasswordInput}
+                      onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                      className="w-full p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Nouveau mot de passe</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        placeholder="Nouveau mot de passe"
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        className="flex-1 p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
+                      />
+                      <button
+                        type="submit"
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer border border-slate-705 dark:border-slate-800"
+                      >
+                        Mettre à jour
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                {passError && (
+                  <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 dark:text-red-400 rounded-xl text-[11px] font-semibold text-center animate-pulse">
+                    ⚠️ {passError}
+                  </div>
+                )}
+                {passSuccess && (
+                  <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-[11px] font-semibold text-center">
+                    ✅ {passSuccess}
+                  </div>
+                )}
+              </div>
+
+              {/* Explicit Sign Out Actions */}
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="px-4 py-2 bg-red-500/10 hover:bg-red-500 hover:text-white border border-red-500/35 text-red-500 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <LogOut size={13} />
+                  <span>Se déconnecter</span>
+                </button>
               </div>
             </div>
 
@@ -4140,224 +4604,458 @@ export default function App() {
           </div>
         </div>
 
-        {/* Payment Procedures instructions */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-extrabold uppercase text-gray-400 tracking-wider text-left">
-            2. Procédures de Règlement Mobile Money
+        {/* Choice of manual or automatic payment */}
+        <div className="space-y-4 text-left">
+          <h3 className="text-sm font-extrabold uppercase text-gray-450 dark:text-gray-400 tracking-wider">
+            2. Sélectionnez votre méthode d'abonnement
           </h3>
-          
-          <div className="bg-white dark:bg-slate-905 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 text-left">
-            <p className="text-xs text-gray-600 dark:text-gray-350 leading-relaxed font-medium">
-              Veuillez effectuer le dépôt correspondant au forfait choisi (<strong className="text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded font-black">{selectedPlan === 'monthly' ? '2 500' : '15 000'} FCFA</strong>) sur l'un de nos numéros officiels Burkina Faso désignés ci-après :
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {/* Orange Money Account */}
-              <div className="p-3 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-orange-400 block">Orange Money</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Ibrahim Sawadogo"}</span>
-                  <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    {paymentCredentials?.orange?.num || "+226 76 00 11 22"}
-                  </code>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleCopyText((paymentCredentials?.orange?.num || "76001122").replace(/\D/g, ''), 'orange')}
-                  className="mt-3.5 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
-                >
-                  {copiedText === 'orange' ? "Copié ✓" : (
-                    <>
-                      <Copy size={11} />
-                      <span>Copier le numéro</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Moov Money Account */}
-              <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Moov Money</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Ibrahim Sawadogo"}</span>
-                  <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    {paymentCredentials?.moov?.num || "+226 60 44 55 66"}
-                  </code>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleCopyText((paymentCredentials?.moov?.num || "60445566").replace(/\D/g, ''), 'moov')}
-                  className="mt-3.5 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
-                >
-                  {copiedText === 'moov' ? "Copié ✓" : (
-                    <>
-                      <Copy size={11} />
-                      <span>Copier le numéro</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Wave Account */}
-              <div className="p-3 bg-sky-500/5 dark:bg-sky-500/10 border border-sky-500/20 rounded-xl flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 block">Wave Transfer</span>
-                  <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Ibrahim Sawadogo"}</span>
-                  <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                    {paymentCredentials?.wave?.num || "+226 55 88 99 00"}
-                  </code>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleCopyText((paymentCredentials?.wave?.num || "55889900").replace(/\D/g, ''), 'wave')}
-                  className="mt-3.5 py-1.5 px-3 bg-sky-500 hover:bg-sky-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
-                >
-                  {copiedText === 'wave' ? "Copié ✓" : (
-                    <>
-                      <Copy size={11} />
-                      <span>Copier le numéro</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="p-3.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl text-[11px] text-yellow-700 dark:text-yellow-400 font-medium flex gap-2">
-              <Info size={16} className="shrink-0 mt-0.5" />
-              <span>
-                <strong>Note importante :</strong> Après validation du transfert mobile, relevez impérativement le <strong>code de référence / Transaction ID</strong> contenu dans le SMS de confirmation reçu de votre opérateur. Saisissez-le ci-dessous pour que l'enregistrement de votre reçu soit normalisé.
-              </span>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-1.5 bg-gray-100 dark:bg-slate-900/60 rounded-2xl border border-gray-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setActivePaymentMode('automatic');
+                playSound('correct');
+              }}
+              className={cn(
+                "py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer w-full",
+                activePaymentMode === 'automatic'
+                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md"
+                  : "text-gray-500 hover:text-gray-900 dark:hover:text-white"
+              )}
+            >
+              <CreditCard size={15} />
+              <span>💳 Paiement Automatique Instantané</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActivePaymentMode('manual');
+                playSound('correct');
+              }}
+              className={cn(
+                "py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer w-full",
+                activePaymentMode === 'manual'
+                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md"
+                  : "text-gray-500 hover:text-gray-900 dark:hover:text-white"
+              )}
+            >
+              <FileText size={15} />
+              <span>📝 Transfert Manuel (SMS Déclaration)</span>
+            </button>
           </div>
         </div>
 
-        {/* Declaration and Registration form */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-extrabold uppercase text-gray-400 tracking-wider text-left">
-            3. Enregistrer et Déclarer votre paiement d'abonnement
-          </h3>
-
-          <form onSubmit={handlePageManualPaymentSubmit} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs text-left">
-            <h4 className="text-xs font-black uppercase text-gray-400 tracking-wider border-b dark:border-slate-800 pb-2 mb-2">
-              Formulaire officiel d'enregistrement de reçu
-            </h4>
-
-            {/* Selector operator */}
-            <div>
-              <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-2">1. Opérateur mobile utilisé</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'orange', name: 'Orange Money' },
-                  { id: 'moov', name: 'Moov Money' },
-                  { id: 'wave', name: 'Wave Cash' }
-                ].map(op => (
-                  <div
-                    key={op.id}
-                    onClick={() => {
-                      setManualOperator(op.id as any);
-                      playSound('correct');
-                    }}
-                    className={cn(
-                      "p-3 rounded-xl border text-center cursor-pointer transition-all flex flex-col items-center justify-center text-xs font-black",
-                      manualOperator === op.id 
-                        ? "bg-faso-green/10 border-faso-green text-faso-green dark:text-faso-green" 
-                        : "bg-gray-50 dark:bg-slate-950/20 border-gray-200 dark:border-slate-800 dark:text-gray-400 hover:border-gray-300"
-                    )}
-                  >
-                    {op.name}
-                  </div>
-                ))}
+        {activePaymentMode === 'automatic' ? (
+          /* AUTOMATIC SUBSCRIPTION FLOW */
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 text-left">
+              <div className="border-b dark:border-slate-800 pb-2 flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase text-gray-400 tracking-wider">
+                  💳 Passerelle de paiement d'abonnement automatique
+                </h4>
+                <span className="text-[9px] bg-sky-500/10 text-sky-500 px-2 py-0.5 rounded-full font-black animate-pulse">🔒 SÉCURISÉ SSL</span>
               </div>
-            </div>
 
-            {/* Sender Phone and Full Name */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-              <div>
-                <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
-                  2. Votre numéro de téléphone payeur
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-gray-400 font-bold">+226</span>
-                  <input
-                    type="text"
-                    required
-                    placeholder="76 00 11 22"
-                    value={manualPhone}
-                    onChange={(e) => setManualPhone(e.target.value)}
-                    className="w-full p-2.5 pl-12 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
-                  />
+              <form onSubmit={handlePageAutoPaymentSubmit} className="space-y-5">
+                <div>
+                  <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-2">1. Opérateur ou moyen à débiter</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'orange', name: 'Orange Money' },
+                      { id: 'moov', name: 'Moov Money' },
+                      { id: 'wave', name: 'Wave Cash' },
+                      { id: 'card', name: 'Carte de Crédit' }
+                    ].map(meth => (
+                      <div
+                        key={meth.id}
+                        onClick={() => {
+                          setSelectedMethod(meth.id as any);
+                          playSound('correct');
+                        }}
+                        className={cn(
+                          "p-3 rounded-xl border text-center cursor-pointer transition-all flex flex-col items-center justify-center text-xs font-black min-h-[55px]",
+                          selectedMethod === meth.id 
+                            ? "bg-faso-green/10 border-faso-green text-faso-green dark:text-faso-green font-extrabold" 
+                            : "bg-gray-50 dark:bg-slate-950/20 border-gray-200 dark:border-slate-800 dark:text-gray-400 hover:border-gray-300"
+                        )}
+                      >
+                        {meth.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {showOtpField ? (
+                  <div className="p-5 bg-violet-500/5 border border-violet-500/20 rounded-2xl space-y-4 text-left">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 text-lg shrink-0">
+                        📲
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-black uppercase tracking-wider text-violet-300">
+                          3. Saisie du Code OTP d'autorisation
+                        </h5>
+                        <p className="text-[11px] text-gray-400 leading-relaxed mt-1">
+                          Pour finaliser le prélèvement direct sécurisé de <strong>{selectedPlan === 'monthly' ? '2 500 FCFA' : '15 000 FCFA'}</strong> sur votre compte {selectedMethod === 'orange' ? 'Orange Money' : 'Moov Money'} :
+                        </p>
+                        <ol className="list-decimal list-inside text-[11px] text-gray-500 mt-2 space-y-1">
+                          <li>Composez le code <strong className="text-white">{selectedMethod === 'orange' ? '*144*4*6#' : '*156*4*5#'}</strong> sur votre téléphone mobile.</li>
+                          <li>Suivez les instructions sur l'écran de votre mobile pour valider le montant.</li>
+                          <li>Saisissez ci-dessous le code OTP à 6 chiffres reçu dans le champ suivant pour activer vos accès.</li>
+                        </ol>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <label className="block text-[10px] font-black uppercase text-gray-450 tracking-wider mb-2">
+                        Code secret temporaire OTP
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={8}
+                        placeholder="Saisissez le code reçu (Ex: 147258)"
+                        value={paymentOtpCode}
+                        onChange={(e) => setPaymentOtpCode(e.target.value.replace(/\D/g, ''))}
+                        className="w-full p-3.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-faso-green text-center text-lg font-mono font-black tracking-widest outline-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {selectedMethod !== 'card' ? (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
+                          2. Votre numéro de téléphone payeur Orange/Moov/Wave
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-xs text-gray-400 font-bold">+226</span>
+                          <input
+                            type="text"
+                            required
+                            placeholder="76 00 11 22"
+                            value={paymentPhone}
+                            onChange={(e) => setPaymentPhone(e.target.value)}
+                            className="w-full p-2.5 pl-12 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white font-mono tracking-widest"
+                          />
+                        </div>
+                        <div className="pt-1 flex flex-col gap-1 text-[10px] text-gray-400">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPaymentPhone('76001122');
+                              playSound('correct');
+                            }}
+                            className="text-faso-green hover:underline cursor-pointer w-fit font-bold"
+                          >
+                            💡 Cliquer pour pré-remplir un numéro d'évaluation valide Burkina
+                          </button>
+                          <p className="leading-relaxed text-[11px] text-gray-500 mt-1">
+                            Saisissez le numéro sur lequel vous recevrez l'autorisation de débit de <strong>{selectedPlan === 'monthly' ? '2 500' : '15 000'} FCFA</strong>. En production, vous validerez avec votre code PIN confidentiel sur votre invite mobile.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-gray-50 dark:bg-slate-950/20 border border-gray-200 dark:border-slate-800 rounded-xl space-y-3">
+                        <div>
+                          <label className="block text-[10px] font-extrabold text-gray-400 uppercase tracking-wider mb-1">Numéro de carte bancaire</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="4242 4242 4242 4242"
+                            value={cardNumber}
+                            onChange={(e) => setCardNumber(e.target.value)}
+                            className="w-full p-2 bg-white dark:bg-slate-950 border border-gray-250 dark:border-slate-850 rounded-lg text-xs"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-extrabold text-gray-400 uppercase tracking-wider mb-1">Date d'expiration</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="MM/AA"
+                              value={cardExpiry}
+                              onChange={(e) => setCardExpiry(e.target.value)}
+                              className="w-full p-2 bg-white dark:bg-slate-950 border border-gray-250 dark:border-slate-850 rounded-lg text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-extrabold text-gray-400 uppercase tracking-wider mb-1">Code CVC / CVV</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="123"
+                              value={cardCvv}
+                              onChange={(e) => setCardCvv(e.target.value)}
+                              className="w-full p-2 bg-white dark:bg-slate-950 border border-gray-250 dark:border-slate-850 rounded-lg text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Response Feedback inside form */}
+                {autoPaymentError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl text-xs font-bold leading-normal">
+                    ⚠️ {autoPaymentError}
+                  </div>
+                )}
+
+                {autoPaymentSuccess && (
+                  <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-bold leading-normal text-left">
+                    {autoPaymentSuccess}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isProcessingAutoPayment}
+                  className="w-full py-4 bg-gradient-to-r from-faso-green to-faso-blue hover:from-green-600 hover:to-blue-600 font-extrabold rounded-xl shadow-lg transition-all text-slate-950 uppercase text-xs tracking-widest cursor-pointer font-black flex items-center justify-center gap-2"
+                >
+                  {isProcessingAutoPayment ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></span>
+                      <span>Traitement automatisé en cours...</span>
+                    </>
+                  ) : (
+                    <>
+                      {showOtpField ? (
+                        <span>Valider & Activer mon forfait Elite Premium ✔</span>
+                      ) : (
+                        <span>Activer mon forfait Elite Premium automatiquement ⚡</span>
+                      )}
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+          </div>
+        ) : (
+          /* MANUAL SUBSCRIPTION FLOW */
+          <>
+            {/* Payment Procedures instructions */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-extrabold uppercase text-gray-400 tracking-wider text-left">
+                2.1. Procédures de Règlement Mobile Money
+              </h3>
+              
+              <div className="bg-white dark:bg-slate-905 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 text-left">
+                <p className="text-xs text-gray-600 dark:text-gray-350 leading-relaxed font-medium">
+                  Veuillez effectuer le dépôt correspondant au forfait choisi (<strong className="text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded font-black">{selectedPlan === 'monthly' ? '2 500' : '15 000'} FCFA</strong>) sur l'un de nos numéros officiels Burkina Faso désignés ci-après :
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Orange Money Account */}
+                  <div className="p-3 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-orange-400 block">Orange Money</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Ibrahim Sawadogo"}</span>
+                      <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
+                        {paymentCredentials?.orange?.num || "+226 76 00 11 22"}
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText((paymentCredentials?.orange?.num || "76001122").replace(/\D/g, ''), 'orange')}
+                      className="mt-3.5 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
+                    >
+                      {copiedText === 'orange' ? "Copié ✓" : (
+                        <>
+                          <Copy size={11} />
+                          <span>Copier le numéro</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Moov Money Account */}
+                  <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Moov Money</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Ibrahim Sawadogo"}</span>
+                      <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
+                        {paymentCredentials?.moov?.num || "+226 60 44 55 66"}
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText((paymentCredentials?.moov?.num || "60445566").replace(/\D/g, ''), 'moov')}
+                      className="mt-3.5 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
+                    >
+                      {copiedText === 'moov' ? "Copié ✓" : (
+                        <>
+                          <Copy size={11} />
+                          <span>Copier le numéro</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Wave Account */}
+                  <div className="p-3 bg-sky-500/5 dark:bg-sky-500/10 border border-sky-500/20 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 block">Wave Transfer</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Ibrahim Sawadogo"}</span>
+                      <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
+                        {paymentCredentials?.wave?.num || "+226 55 88 99 00"}
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText((paymentCredentials?.wave?.num || "55889900").replace(/\D/g, ''), 'wave')}
+                      className="mt-3.5 py-1.5 px-3 bg-sky-500 hover:bg-sky-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
+                    >
+                      {copiedText === 'wave' ? "Copié ✓" : (
+                        <>
+                          <Copy size={11} />
+                          <span>Copier le numéro</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl text-[11px] text-yellow-700 dark:text-yellow-400 font-medium flex gap-2 w-full text-left">
+                  <Info size={16} className="shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Note importante :</strong> Après validation du transfert mobile, relevez impérativement le <strong>code de référence / Transaction ID</strong> contenu dans le SMS de confirmation reçu de votre opérateur. Saisissez-le ci-dessous pour que l'enregistrement de votre reçu soit normalisé.
+                  </span>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
-                  3. Nom complet déclaré de l'expéditeur
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Ibrahim Sawadogo"
-                  value={manualName}
-                  onChange={(e) => setManualName(e.target.value)}
-                  className="w-full p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
-                />
-              </div>
             </div>
 
-            {/* Reference & Amount */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-              <div>
-                <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
-                  4. Montant envoyé (FCFA)
-                </label>
-                <input
-                  type="number"
-                  disabled
-                  value={manualAmount}
-                  className="w-full p-2.5 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs text-gray-500 dark:text-gray-400 opacity-80"
-                />
-              </div>
+            {/* Declaration and Registration form */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-extrabold uppercase text-gray-400 tracking-wider text-left">
+                2.2. Enregistrer et Déclarer votre paiement d'abonnement
+              </h3>
 
-              <div>
-                <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
-                  5. Code de référence / ID de transaction
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Saisissez la référence du SMS d'envoi"
-                  value={manualReference}
-                  onChange={(e) => setManualReference(e.target.value)}
-                  className="w-full p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white uppercase tracking-wider font-mono font-bold"
-                />
-              </div>
+              <form onSubmit={handlePageManualPaymentSubmit} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs text-left">
+                <h4 className="text-xs font-black uppercase text-gray-400 tracking-wider border-b dark:border-slate-800 pb-2 mb-2">
+                  Formulaire officiel d'enregistrement de reçu
+                </h4>
+
+                {/* Selector operator */}
+                <div>
+                  <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-2">1. Opérateur mobile utilisé</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'orange', name: 'Orange Money' },
+                      { id: 'moov', name: 'Moov Money' },
+                      { id: 'wave', name: 'Wave Cash' }
+                    ].map(op => (
+                      <div
+                        key={op.id}
+                        onClick={() => {
+                          setManualOperator(op.id as any);
+                          playSound('correct');
+                        }}
+                        className={cn(
+                          "p-3 rounded-xl border text-center cursor-pointer transition-all flex flex-col items-center justify-center text-xs font-black",
+                          manualOperator === op.id 
+                            ? "bg-faso-green/10 border-faso-green text-faso-green dark:text-faso-green" 
+                            : "bg-gray-50 dark:bg-slate-950/20 border-gray-200 dark:border-slate-800 dark:text-gray-400 hover:border-gray-300"
+                        )}
+                      >
+                        {op.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sender Phone and Full Name */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
+                      2. Votre numéro de téléphone payeur
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-xs text-gray-400 font-bold">+226</span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="76 00 11 22"
+                        value={manualPhone}
+                        onChange={(e) => setManualPhone(e.target.value)}
+                        className="w-full p-2.5 pl-12 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
+                      3. Nom complet declared de l'expéditeur
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Ibrahim Sawadogo"
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                      className="w-full p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Reference & Amount */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
+                      4. Montant envoyé (FCFA)
+                    </label>
+                    <input
+                      type="number"
+                      disabled
+                      value={manualAmount}
+                      className="w-full p-2.5 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs text-gray-500 dark:text-gray-400 opacity-80"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-gray-500 uppercase tracking-wider mb-1">
+                      5. Code de référence / ID de transaction
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Saisissez la référence du SMS d'envoi"
+                      value={manualReference}
+                      onChange={(e) => setManualReference(e.target.value)}
+                      className="w-full p-2.5 bg-gray-50 dark:bg-slate-950 border border-gray-250 dark:border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs dark:text-white uppercase tracking-wider font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Simulate test buttons */}
+                <div className="flex flex-col gap-1.5 p-2.5 bg-slate-100 dark:bg-slate-950/40 rounded-xl border border-gray-200/50 dark:border-slate-850">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualPhone('76123456');
+                      setManualName(profile.name || 'Ibrahim Sawadogo');
+                      setManualReference(`OMF-${Math.floor(Math.random() * 90000 + 10000)}`);
+                      playSound('correct');
+                    }}
+                    className="text-[10px] text-faso-green hover:underline cursor-pointer w-fit font-bold"
+                  >
+                    💡 Cliquer pour simuler des données de dépôt test cohérentes
+                  </button>
+                </div>
+
+                {/* Submit button */}
+                <button
+                  type="submit"
+                  className="w-full py-3.5 bg-gradient-to-r from-faso-green to-faso-blue hover:from-green-600 hover:to-blue-600 font-extrabold rounded-xl shadow-md transition-all text-slate-950 uppercase text-xs tracking-wider cursor-pointer font-black"
+                >
+                  Enregistrer mon reçu & déclarer mon paiement 📥
+                </button>
+              </form>
             </div>
-
-            {/* Simulate test buttons */}
-            <div className="flex flex-col gap-1.5 p-2.5 bg-slate-100 dark:bg-slate-950/40 rounded-xl border border-gray-200/50 dark:border-slate-850">
-              <button
-                type="button"
-                onClick={() => {
-                  setManualPhone('76123456');
-                  setManualName(profile.name || 'Ibrahim Sawadogo');
-                  setManualReference(`OMF-${Math.floor(Math.random() * 90000 + 10000)}`);
-                  playSound('correct');
-                }}
-                className="text-[10px] text-faso-green hover:underline cursor-pointer w-fit font-bold"
-              >
-                💡 Cliquer pour simuler des données de dépôt test cohérentes
-              </button>
-            </div>
-
-            {/* Submit button */}
-            <button
-              type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-faso-green to-faso-blue hover:from-green-600 hover:to-blue-600 font-extrabold rounded-xl shadow-md transition-all text-slate-950 uppercase text-xs tracking-wider cursor-pointer font-black"
-            >
-              Enregistrer mon reçu & déclarer mon paiement 📥
-            </button>
-          </form>
-        </div>
+          </>
+        )}
 
         {/* Transaction History Logs */}
         <div className="space-y-4">
@@ -4431,18 +5129,37 @@ export default function App() {
   const renderAdminModal = () => {
     // If Admin is locked, show a highly secure login panel
     if (!isAdminUnlocked) {
-      const handleAdminUnlockSubmit = (e: React.FormEvent) => {
+      const handleAdminUnlockSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const emailClean = adminInputEmail.trim().toLowerCase();
         const codeClean = adminInputPasscode.trim();
 
-        if (emailClean === 'ibrahimsawadogo36@gmail.com' && codeClean === 'IBRAHIM_FASO_2026') {
-          setIsAdminUnlocked(true);
-          setAdminUnlockError(null);
-          localStorage.setItem('faso_educ_admin_unlocked', 'true');
-          playSound('finish');
-        } else {
-          setAdminUnlockError("Identifiants ou code d'activation réseau incorrect. Accès refusé.");
+        try {
+          const response = await fetch(getApiUrl('/api/admin/login'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: emailClean, passcode: codeClean })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.token) {
+              setIsAdminUnlocked(true);
+              setAdminUnlockError(null);
+              localStorage.setItem('faso_educ_admin_unlocked', 'true');
+              localStorage.setItem('faso_educ_admin_token', data.token);
+              playSound('finish');
+            } else {
+              setAdminUnlockError("Clé d'autorisation réseau ou email incorrect.");
+              playSound('wrong');
+            }
+          } else {
+            const errData = await response.json();
+            setAdminUnlockError(errData.error || "Identifiants refusés. Accès restreint.");
+            playSound('wrong');
+          }
+        } catch (err) {
+          setAdminUnlockError("Impossible de contacter le serveur d'administration.");
           playSound('wrong');
         }
       };
@@ -4477,7 +5194,7 @@ export default function App() {
                 <input 
                   type="email" 
                   required
-                  placeholder="ibrahimsawadogo36@gmail.com"
+                  placeholder="Ex: gerant-admin@faso-educ.bf"
                   value={adminInputEmail}
                   onChange={(e) => setAdminInputEmail(e.target.value)}
                   className="w-full p-3.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-violet-500 text-xs outline-none font-mono"
@@ -4491,7 +5208,7 @@ export default function App() {
                 <input 
                   type="password" 
                   required
-                  placeholder="Mot de passe d'usine"
+                  placeholder="Saisissez votre code d'accès gerant"
                   value={adminInputPasscode}
                   onChange={(e) => setAdminInputPasscode(e.target.value)}
                   className="w-full p-3.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-violet-500 text-xs outline-none font-mono"
@@ -4531,7 +5248,10 @@ export default function App() {
         try {
           await fetch(getApiUrl('/api/users/ban'), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+            },
             body: JSON.stringify({ email: cleanEmail })
           });
         } catch (e) {
@@ -4550,7 +5270,10 @@ export default function App() {
       try {
         await fetch(getApiUrl('/api/users/unban'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+          },
           body: JSON.stringify({ email: cleanEmail })
         });
       } catch (e) {
@@ -4573,7 +5296,10 @@ export default function App() {
       try {
         await fetch(getApiUrl('/api/payments/status'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+          },
           body: JSON.stringify({ id: txId, status })
         });
       } catch (err) {
@@ -5100,16 +5826,19 @@ export default function App() {
 
       {/* Advanced Bottom Navigation Glass Panel */}
       {!quizState && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/50 dark:border-gray-800/50 p-2 flex justify-around items-center z-30 shadow-lg">
+        <nav 
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200/50 dark:border-gray-800/50 p-2 flex overflow-x-auto sm:justify-around items-center z-30 shadow-lg whitespace-nowrap gap-1.5 xs:gap-3 sm:gap-0"
+        >
           <button 
             onClick={() => setActiveTab('Accueil')}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[70px]",
               activeTab === 'Accueil' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <HomeIcon size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Accueil</span>
+            <HomeIcon size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Accueil</span>
           </button>
           <button 
             onClick={() => {
@@ -5117,24 +5846,24 @@ export default function App() {
               setSelectedCourse(null);
             }}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[70px]",
               activeTab === 'Cours' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <BookOpen size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Académie</span>
+            <BookOpen size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Académie</span>
           </button>
           <button 
             onClick={() => {
               setActiveTab('Competition');
             }}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[70px]",
               activeTab === 'Competition' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <Trophy size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Arène Live</span>
+            <Trophy size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Arène Live</span>
           </button>
           <button 
             onClick={() => {
@@ -5142,12 +5871,12 @@ export default function App() {
               setSelectedPostId(null);
             }}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[70px]",
               activeTab === 'Forum' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <Users size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Communauté</span>
+            <Users size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Communauté</span>
           </button>
           <button 
             onClick={() => {
@@ -5155,12 +5884,12 @@ export default function App() {
               playSound('correct');
             }}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[70px]",
               activeTab === 'Paiement' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <CreditCard size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Abonnement</span>
+            <CreditCard size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Abonnement</span>
           </button>
           <button 
             onClick={() => {
@@ -5168,22 +5897,22 @@ export default function App() {
               playSound('correct');
             }}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[80px]",
               activeTab === 'Espace' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <User size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Mon Espace</span>
+            <User size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Mon Espace</span>
           </button>
           <button 
             onClick={() => setActiveTab('Historique')}
             className={cn(
-              "flex flex-col items-center p-2.5 rounded-2xl transition-all cursor-pointer",
+              "flex flex-col items-center p-2 rounded-xl transition-all cursor-pointer shrink-0 min-w-[80px]",
               activeTab === 'Historique' ? "text-faso-green bg-faso-green/10" : "text-gray-400 dark:text-gray-600 hover:text-gray-605"
             )}
           >
-            <HistoryIcon size={22} />
-            <span className="text-[10px] font-bold uppercase mt-1">Bibliothèque</span>
+            <HistoryIcon size={20} />
+            <span className="text-[9px] font-bold uppercase mt-1">Bibliothèque</span>
           </button>
         </nav>
       )}

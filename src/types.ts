@@ -83,6 +83,7 @@ export interface UserProfile {
   regionName?: string;
   learningStreak?: number;
   points?: number;
+  password?: string;
 }
 
 export interface ManualPaymentTx {

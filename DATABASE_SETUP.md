@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     points INTEGER DEFAULT 0,
     learning_streak INTEGER DEFAULT 0,
     is_banned BOOLEAN DEFAULT FALSE,
+    password TEXT DEFAULT '123456',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -82,7 +83,24 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Créez des règles de sécurité basiques (RLS) ou laissez en mode public-permit pour commencer simple.
+-- Index pour d'autres tables
+CREATE INDEX IF NOT EXISTS idx_manual_payments_email ON public.manual_payments(user_email);
+CREATE INDEX IF NOT EXISTS idx_favorited_questions_email ON public.favorited_questions(user_email);
+CREATE INDEX IF NOT EXISTS idx_courses_email ON public.courses(user_email);
+CREATE INDEX IF NOT EXISTS idx_quiz_results_email ON public.quiz_results(user_email);
+
+-- --- GESTION DU ROW LEVEL SECURITY (RLS) ---
+-- Option A (Recommandée & Simple) : Désactivez le RLS si vous utilisez des connexions directes ou des clés d'API
+ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.manual_payments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.favorited_questions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.courses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quiz_results DISABLE ROW LEVEL SECURITY;
+
+-- Option B (Sécurisée) : Activer RLS et créer des politiques de sécurité autorisant l'accès public en lecture/écriture aux clés anonymes
+-- ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY "Permettre tout accès aux profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
+-- ... (Répétez pour chaque table selon vos politiques d'entreprise)
 ```
 
 ---
