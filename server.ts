@@ -492,7 +492,7 @@ app.get("/api/profiles/:email", async (req, res) => {
   if (!prof && serverProfiles[email]) {
     prof = { ...serverProfiles[email] };
   } else if (prof && serverProfiles[email]) {
-    prof = { ...prof, ...serverProfiles[email] };
+    prof = { ...serverProfiles[email], ...prof };
   }
 
   if (prof) {
@@ -549,19 +549,28 @@ app.post("/api/profiles/sync", async (req, res) => {
     return res.status(403).json({ error: "banned", message: "Ce compte est suspendu par l'administration" });
   }
 
+  // Determine true isPremium status server-side (preventing standard clients from upgrading themselves via sync)
+  let isPremiumStatus = false;
+
   if (supabaseAdmin) {
     try {
-      const { data: checkBan } = await supabaseAdmin
+      const { data: dbCheck } = await supabaseAdmin
         .from("profiles")
-        .select("is_banned")
+        .select("is_banned, is_premium")
         .eq("email", email)
         .maybeSingle();
 
-      if (checkBan && checkBan.is_banned) {
-        if (!serverBannedEmails.includes(email)) {
-          serverBannedEmails.push(email);
+      if (dbCheck) {
+        if (dbCheck.is_banned) {
+          if (!serverBannedEmails.includes(email)) {
+            serverBannedEmails.push(email);
+          }
+          return res.status(403).json({ error: "banned", message: "Ce compte est suspendu par l'administration" });
         }
-        return res.status(403).json({ error: "banned", message: "Ce compte est suspendu par l'administration" });
+        isPremiumStatus = !!dbCheck.is_premium;
+      } else {
+        // Fall back to memory if the user does not exist in the database yet
+        isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
       }
 
       const upsertData: any = {
@@ -571,7 +580,7 @@ app.post("/api/profiles/sync", async (req, res) => {
         target_exam: profile.targetExam,
         region_name: profile.regionName,
         avatar: profile.avatar || "👨‍🎓",
-        is_premium: profile.isPremium,
+        is_premium: isPremiumStatus,
         points: profile.points || 0,
         learning_streak: profile.learningStreak || 0,
         password: profile.password || "123456"
@@ -589,7 +598,10 @@ app.post("/api/profiles/sync", async (req, res) => {
       if (error) throw error;
     } catch (err: any) {
       console.error("Supabase profile sync error, falling back:", err.message);
+      isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
     }
+  } else {
+    isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
   }
 
   // Preserve existing device lock if any
@@ -600,6 +612,7 @@ app.post("/api/profiles/sync", async (req, res) => {
   serverProfiles[email] = {
     ...serverProfiles[email],
     ...profile,
+    isPremium: isPremiumStatus,
     boundDeviceId: finalBound,
     registered: true
   };

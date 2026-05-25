@@ -404,11 +404,21 @@ export default function App() {
         }
 
         // Send active properties to save on backend
-        await fetch(getApiUrl('/api/profiles/sync'), {
+        const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...profile, deviceId })
         });
+        if (syncRes.ok && isActive) {
+          const syncData = await syncRes.json();
+          if (syncData && syncData.profile) {
+            setProfile(prev => ({
+              ...prev,
+              ...syncData.profile,
+              isPremium: !!syncData.profile.isPremium || !!syncData.profile.is_premium
+            }));
+          }
+        }
       } catch (err) {
         console.warn("Syncing fallback local profile mode active.", err);
       }
