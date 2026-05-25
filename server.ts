@@ -171,7 +171,7 @@ Détails de la transaction :
 📅 Date : ${new Date(tx.date).toLocaleString('fr-FR')}
 ----------------------------------------
 
-Lien d'administration pour valider : ${process.env.APP_URL || 'https://refaso-educ.onrender.com'} (Ouvrez le menu Admin "🔑 Administration Réseau")
+Lien d'administration pour valider : ${process.env.APP_URL || 'https://faso-educ.onrender.com'} (Ouvrez le menu Admin "🔑 Administration Réseau")
 
 Cordialement,
 Le Système d'Automatisation de Faso-Educ Net`;
@@ -216,7 +216,7 @@ Le Système d'Automatisation de Faso-Educ Net`;
       </div>
       
       <div style="text-align: center; margin-top: 25px;">
-        <a href="${process.env.APP_URL || 'https://refaso-educ.onrender.com'}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 13px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.2);">
+        <a href="${process.env.APP_URL || 'https://faso-educ.onrender.com'}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 13px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.2);">
           Accéder au Portail de Validation
         </a>
       </div>
@@ -1730,22 +1730,22 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     try {
       const senderUser = process.env.SMTP_USER || "votre-gmail-professionnel@gmail.com";
       const mailOptions = {
-        from: `"ReFaso Educ - Support" <${senderUser}>`,
+        from: `"Faso Educ - Support" <${senderUser}>`,
         to: email,
-        subject: "🔑 Code de réinitialisation de votre mot de passe - ReFaso Educ",
-        text: `Bonjour ${userProfile.name || "Candidat"},\n\nVous avez demandé la réinitialisation de votre mot de passe pour le portail d'études d'élite ReFaso Educ.\n\nVotre code confidentiel OTP est : ${otpCode}\n\nCe code expirera dans 15 minutes.\n\nCordialement,\nService d'assistance ReFaso Educ`,
+        subject: "🔑 Code de réinitialisation de votre mot de passe - Faso Educ",
+        text: `Bonjour ${userProfile.name || "Candidat"},\n\nVous avez demandé la réinitialisation de votre mot de passe pour le portail d'études d'élite Faso Educ.\n\nVotre code confidentiel OTP est : ${otpCode}\n\nCe code expirera dans 15 minutes.\n\nCordialement,\nService d'assistance Faso Educ`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 30px; background-color: #f8fafc; color: #1e293b;">
             <div style="text-align: center; margin-bottom: 25px;">
               <div style="display: inline-block; width: 50px; height: 50px; background: linear-gradient(135deg, #10b981, #3b82f6); border-radius: 12px; line-height: 50px; color: white; font-size: 24px; font-weight: bold;">F</div>
               <h2 style="color: #0f172a; margin-top: 15px; margin-bottom: 5px; font-weight: 800; font-size: 22px;">Réinitialisation de mot de passe</h2>
-              <p style="color: #64748b; font-size: 13px; margin-top: 5px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">ReFaso Educ - Révisions d'Élite</p>
+              <p style="color: #64748b; font-size: 13px; margin-top: 5px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">Faso Educ - Révisions d'Élite</p>
             </div>
             
             <p style="font-size: 14px; line-height: 1.6; color: #334155;">
               Bonjour <strong>${userProfile.name || "Candidat"}</strong>,
               <br/><br/>
-              Vous avez formulé une demande de renouvellement de votre mot de passe d'accès académique ReFaso Educ.
+              Vous avez formulé une demande de renouvellement de votre mot de passe d'accès académique Faso Educ.
             </p>
             
             <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
@@ -1762,7 +1762,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
             
             <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 25px 0;" />
             <p style="font-size: 11px; text-align: center; color: #94a3b8; line-height: 1.4; margin: 0;">
-              Cet e-mail automatique a été envoyé par <strong>ReFaso Educ</strong>.
+              Cet e-mail automatique a été envoyé par <strong>Faso Educ</strong>.
               <br/>
               Propulsé par le Réseau de Concours d'Ibrahim Sawadogo.
             </p>

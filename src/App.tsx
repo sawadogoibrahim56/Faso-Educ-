@@ -2804,7 +2804,7 @@ export default function App() {
               <span className="text-white font-black text-3xl">F</span>
             </div>
             <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent">
-              ReFaso Educ
+              FASO EDUC
             </h1>
             <p className="text-xs text-gray-400 mt-2 font-medium uppercase tracking-wider">
               Portail de Révisions & Concours d'Élite
@@ -3970,7 +3970,7 @@ export default function App() {
                     Félicitations, Académicien Premium !
                   </h4>
                   <p className="text-xs text-gray-400 mt-2 max-w-sm mx-auto leading-relaxed">
-                    Votre paiement a été traité avec succès dans notre système. Vous bénéficiez désormais d'une licence d'utilisation illimitée aux quiz et cours d'élite ReFaso Educ.
+                    Votre paiement a été traité avec succès dans notre système. Vous bénéficiez désormais d'une licence d'utilisation illimitée aux quiz et cours d'élite Faso Educ.
                   </p>
                 </div>
                 <button
@@ -6566,7 +6566,7 @@ export default function App() {
                         🗄️ Tableau de Santé de la Base Supabase
                       </h3>
                       <p className="text-[10px] text-gray-400 mt-1">
-                        Vérifiez l'intégration en temps réel des tables et colonnes pour ReFaso Educ.
+                        Vérifiez l'intégration en temps réel des tables et colonnes pour Faso Educ.
                       </p>
                     </div>
                     <button
@@ -6618,7 +6618,7 @@ export default function App() {
                   <div className="text-[11px] leading-relaxed text-gray-400 bg-slate-950 p-3 rounded-xl border border-dashed border-slate-850 space-y-1 text-left">
                     <p className="font-bold text-gray-300">💡 Commentaire de l'Assistance Technique :</p>
                     <p>
-                      ReFaso Educ est équipé d'une résilience <strong>"Zero-Freeze"</strong>. En cas d'indisponibilité, 
+                      Faso Educ est équipé d'une résilience <strong>"Zero-Freeze"</strong>. En cas d'indisponibilité, 
                       de tables manquantes ou de latence de votre compte Supabase, toutes les données (résultats, abonnés, récepissés) 
                       sont stockées dans un stockage mémoire chiffré local du serveur <code>(local_db.json)</code>. Vos candidats ne perdront JAMAIS leur progression.
                     </p>
@@ -6864,7 +6864,7 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
             <span className="text-white font-black text-xl">F</span>
           </div>
           <div>
-            <span className="font-extrabold text-lg tracking-tight dark:text-white block leading-none">ReFaso Educ</span>
+            <span className="font-extrabold text-lg tracking-tight dark:text-white block leading-none">FASO EDUC</span>
             <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider block mt-1">Préparation d'Élite</span>
           </div>
         </div>
