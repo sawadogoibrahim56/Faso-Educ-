@@ -608,6 +608,28 @@ app.post("/api/profiles/sync", async (req, res) => {
   res.json({ success: true, profile: serverProfiles[email], token });
 });
 
+app.get("/api/profiles", (req, res) => {
+  const query = req.query.q ? (req.query.q as string).trim().toLowerCase() : "";
+  const list = Object.values(serverProfiles)
+    .filter((p: any) => p && (p.registered || p.email))
+    .map((p: any) => ({
+      email: p.email,
+      name: p.name || p.email.split("@")[0],
+      level: p.level || "Licence",
+      avatar: p.avatar || "👨‍🎓",
+      isPremium: !!p.isPremium || !!p.is_premium
+    }));
+
+  if (query) {
+    const filtered = list.filter(p => 
+      p.name.toLowerCase().includes(query) || 
+      p.email.toLowerCase().includes(query)
+    );
+    return res.json(filtered.slice(0, 50)); // Return top 50 matches
+  }
+  return res.json(list.slice(0, 50));
+});
+
 // 3. Manual Payment Transaction Synchronization
 app.get("/api/payments", async (req, res) => {
   if (supabaseAdmin) {

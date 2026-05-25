@@ -136,6 +136,9 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Human inviting
   const [customInvitations, setCustomInvitations] = useState<string[]>([]);
   const [newInviteName, setNewInviteName] = useState<string>("");
+  const [searchCompetitorQuery, setSearchCompetitorQuery] = useState<string>("");
+  const [searchedCompetitors, setSearchedCompetitors] = useState<any[]>([]);
+  const [isSearchingCompetitors, setIsSearchingCompetitors] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [roomNumber, setRoomNumber] = useState<number>(() => {
     return initialSharedRoomNumber || Math.floor(Math.random() * 90000 + 10000);
@@ -224,6 +227,38 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       // AudioContext fails gracefully in quiet mode browser contexts
     }
   };
+
+  // Searching competitors registered on platforms
+  useEffect(() => {
+    let active = true;
+    if (!searchCompetitorQuery.trim()) {
+      setSearchedCompetitors([]);
+      return;
+    }
+
+    const handler = setTimeout(async () => {
+      setIsSearchingCompetitors(true);
+      try {
+        const url = getApiUrl(`/api/profiles?q=${encodeURIComponent(searchCompetitorQuery.trim())}`);
+        const res = await fetch(url);
+        if (res.ok && active) {
+          const data = await res.json();
+          // Exclude self from search
+          const filteredSelf = (data || []).filter((u: any) => u.email !== profile?.email);
+          setSearchedCompetitors(filteredSelf);
+        }
+      } catch (err) {
+        console.warn("Failed searching registered competitors:", err);
+      } finally {
+        if (active) setIsSearchingCompetitors(false);
+      }
+    }, 450);
+
+    return () => {
+      active = false;
+      clearTimeout(handler);
+    };
+  }, [searchCompetitorQuery, profile?.email]);
 
   // Skip setup logic if loaded via joining a duel room number
   useEffect(() => {
@@ -1454,6 +1489,67 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* Rechercher un candidat enregistré */}
+              <div className="space-y-2.5 pt-2 border-t dark:border-gray-850">
+                <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1.5">
+                  🔍 Rechercher un candidat disponible par de son Nom / E-mail réel
+                </label>
+                <div className="flex gap-2 font-sans">
+                  <input
+                    type="text"
+                    value={searchCompetitorQuery}
+                    onChange={(e) => setSearchCompetitorQuery(e.target.value)}
+                    placeholder="Saisissez un nom ou email du candidat..."
+                    className="flex-1 p-2.5 border rounded-xl outline-none text-xs dark:bg-gray-950 dark:text-white"
+                  />
+                </div>
+                
+                {isSearchingCompetitors && (
+                  <p className="text-[10px] text-faso-blue animate-pulse font-sans">Recherche des candidats en cours...</p>
+                )}
+
+                {searchedCompetitors.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {searchedCompetitors.map((usr) => {
+                      const isInvited = customInvitations.includes(usr.name);
+                      return (
+                        <div 
+                          key={usr.email}
+                          className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-900 border dark:border-gray-800 rounded-xl shadow-xs"
+                        >
+                          <div className="flex items-center gap-2 max-w-[65%] font-sans">
+                            <span className="text-sm shrink-0">{usr.avatar || '👨‍🎓'}</span>
+                            <div className="text-left leading-normal">
+                              <span className="font-extrabold text-xs dark:text-gray-100 block truncate">
+                                {usr.name} {usr.isPremium && <span className="text-amber-500">🏆</span>}
+                              </span>
+                              <span className="text-[9px] text-gray-400 block font-mono truncate">{usr.email} • {usr.level}</span>
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => handleSendDirectInvite(usr.email, usr.name)}
+                            disabled={isInvited}
+                            className={cn(
+                              "px-3 py-1.5 font-extrabold text-[10px] rounded-lg transition-all shadow-xs flex items-center gap-1 select-none cursor-pointer",
+                              isInvited
+                                ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500 cursor-not-allowed"
+                                : "bg-faso-green hover:bg-green-600 text-white"
+                            )}
+                          >
+                            {isInvited ? "Défi Lancé ✓" : "Défier 💥"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : searchCompetitorQuery.trim() && !isSearchingCompetitors ? (
+                  <p className="text-[10px] text-amber-500 mt-1 italic font-sans">
+                    Aucun candidat enregistré trouvé avec ce nom ou e-mail.
+                  </p>
+                ) : null}
               </div>
 
               {/* Humans dynamic invite list */}
