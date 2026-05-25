@@ -1439,6 +1439,70 @@ app.get("/api/admin/users", async (req, res) => {
   });
 });
 
+// Admin Route to diagnose and verify Supabase Tables and status
+app.get("/api/admin/db-diagnostic", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: "Accès refusé. Autorisation administrateur requise." });
+  }
+
+  const diagnosisList: Record<string, any> = {};
+  const isSupabaseConfigured = !!supabaseAdmin;
+
+  const tablesToCheck = [
+    { name: "profiles", columns: "email, name, level, is_premium" },
+    { name: "manual_payments", columns: "id, user_email, amount, reference, status" },
+    { name: "favorited_questions", columns: "id, user_email" },
+    { name: "courses", columns: "id, title, is_public" },
+    { name: "quiz_results", columns: "id, user_email, score, percentage" }
+  ];
+
+  if (isSupabaseConfigured) {
+    for (const tbl of tablesToCheck) {
+      try {
+        const { data, error } = await supabaseAdmin
+          .from(tbl.name)
+          .select(tbl.columns)
+          .limit(1);
+
+        if (error) {
+          diagnosisList[tbl.name] = {
+            active: false,
+            status: "Inaccessible / Colonnes manquantes",
+            error: error.message,
+            hint: error.hint || `Veuillez exécuter le script SQL de DATABASE_SETUP.md pour recréer ou modifier la table public.${tbl.name}.`
+          };
+        } else {
+          // Verify with a simple count
+          const { count, error: countErr } = await supabaseAdmin
+            .from(tbl.name)
+            .select('*', { count: 'exact', head: true });
+
+          diagnosisList[tbl.name] = {
+            active: true,
+            status: "Parfaitement Fonctionnelle ✅",
+            count: countErr ? (data ? data.length : 0) : (count || 0),
+            error: null
+          };
+        }
+      } catch (err: any) {
+        diagnosisList[tbl.name] = {
+          active: false,
+          status: "Erreur de connexion",
+          error: err.message,
+          hint: "Connexion rejetée ou impossible avec Supabase."
+        };
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    connected: isSupabaseConfigured,
+    supabaseUrl: process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL.substring(0, 15)}...` : "Indéfinie ❌",
+    database: diagnosisList
+  });
+});
+
 app.post("/api/admin/reset-device", (req, res) => {
   if (!isAdminRequest(req)) {
     return res.status(403).json({ error: "Accès refusé. Autorisation administrateur requise." });
@@ -1953,9 +2017,11 @@ app.post("/api/history", async (req, res) => {
   
   if (supabaseAdmin) {
     try {
-      const { error } = await supabaseAdmin.from("quiz_results").upsert({
+      const upsertData: any = {
         id: cleanResult.id,
         user_email: cleanResult.userEmail,
+        author_name: cleanResult.authorName,
+        is_public: cleanResult.isPublic,
         subjects: cleanResult.subjects,
         level: cleanResult.level,
         score: cleanResult.score,
@@ -1964,13 +2030,23 @@ app.post("/api/history", async (req, res) => {
         questions: JSON.stringify(cleanResult.questions),
         mode: cleanResult.mode,
         created_at: cleanResult.date
-      }, { onConflict: "id" });
+      };
+
+      let { error } = await supabaseAdmin.from("quiz_results").upsert(upsertData, { onConflict: "id" });
+
+      if (error && error.message && (error.message.includes("author_name") || error.message.includes("is_public") || error.message.includes("column"))) {
+        console.warn("⚠️ Fallback: Supabase 'quiz_results' table does not have 'author_name' or 'is_public' columns. Syncing without them.");
+        const { author_name, is_public, ...fallbackData } = upsertData;
+        const resFallback = await supabaseAdmin.from("quiz_results").upsert(fallbackData, { onConflict: "id" });
+        error = resFallback.error;
+      }
       
       if (error) {
-        console.warn("Warning: Supabase table 'quiz_results' not found. Storing in Server Cache fallback.");
+        console.warn("⚠️ Warning: Supabase table 'quiz_results' sync failed:", error.message, "| Details:", error.details, "| Hint:", error.hint);
+        console.info("💡 Note: You can run the database setup script in DATABASE_SETUP.md in your Supabase SQL Editor to make sure all tables are created.");
       }
     } catch (err: any) {
-      console.error("Supabase quiz result upsert error, saved to cache:", err.message);
+      console.error("Supabase quiz result upsert error, saved to local cache:", err.message);
     }
   }
   

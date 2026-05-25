@@ -3174,10 +3174,12 @@ export default function App() {
 
   // Admin access state
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails' | 'banList' | 'users'>('transactions');
+  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails' | 'banList' | 'users' | 'database'>('transactions');
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingAdminUsers, setIsLoadingAdminUsers] = useState(false);
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [dbDiagnosis, setDbDiagnosis] = useState<any>(null);
+  const [isLoadingDiagnosis, setIsLoadingDiagnosis] = useState<boolean>(false);
   const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'premium' | 'pending' | 'trial' | 'expired'>('all');
   const [paymentAlertMessage, setPaymentAlertMessage] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -3418,9 +3420,33 @@ export default function App() {
     }
   };
 
+  const fetchDbDiagnosis = async () => {
+    setIsLoadingDiagnosis(true);
+    try {
+      const token = localStorage.getItem('faso_educ_admin_token') || '';
+      const response = await fetch(getApiUrl('/api/admin/db-diagnostic'), {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDbDiagnosis(data);
+      }
+    } catch (err) {
+      console.warn("Offline database diagnostic query failure fallback:", err);
+    } finally {
+      setIsLoadingDiagnosis(false);
+    }
+  };
+
   useEffect(() => {
     if (showAdminModal && isAdminUnlocked) {
-      fetchAdminUsers();
+      if (adminModalTab === 'database') {
+        fetchDbDiagnosis();
+      } else {
+        fetchAdminUsers();
+      }
     }
   }, [showAdminModal, adminModalTab, isAdminUnlocked]);
 
@@ -6007,6 +6033,18 @@ export default function App() {
             >
               👥 Candidats & Abonnés ({adminUsers.length})
             </button>
+            <button
+              onClick={() => {
+                setAdminModalTab('database');
+                playSound('correct');
+              }}
+              className={cn(
+                "px-3 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap",
+                adminModalTab === 'database' ? "border-violet-500 text-violet-400" : "border-transparent text-gray-400 hover:text-white"
+              )}
+            >
+              🗄️ Base Supabase
+            </button>
           </div>
 
           {/* Modal content body */}
@@ -6515,6 +6553,202 @@ export default function App() {
                       </div>
                     );
                   })()}
+                </div>
+              </div>
+            )}
+
+            {adminModalTab === 'database' && (
+              <div className="space-y-4">
+                <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 text-sans text-xs space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-black text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                        🗄️ Tableau de Santé de la Base Supabase
+                      </h3>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        Vérifiez l'intégration en temps réel des tables et colonnes pour ReFaso Educ.
+                      </p>
+                    </div>
+                    <button
+                      onClick={fetchDbDiagnosis}
+                      disabled={isLoadingDiagnosis}
+                      className={cn(
+                        "px-3 py-1.5 bg-slate-800 hover:bg-slate-700 font-bold border border-slate-700 text-[10px] rounded-lg transition-all text-white cursor-pointer",
+                        isLoadingDiagnosis && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {isLoadingDiagnosis ? "Diagnostic en cours..." : "🔄 Rafraîchir l'État"}
+                    </button>
+                  </div>
+
+                  {/* Supabase connection banner */}
+                  {dbDiagnosis ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-3.5 bg-slate-950/40 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[9px] text-gray-400 font-extrabold uppercase tracking-widest block">Statut Global</span>
+                        <div className="flex items-center gap-1.5">
+                          {dbDiagnosis.connected ? (
+                            <>
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                              <strong className="text-emerald-400 font-black text-xs uppercase uppercase">Supabase Connecté (Actif)</strong>
+                            </>
+                          ) : (
+                            <>
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                              <strong className="text-amber-400 font-black text-xs uppercase">Mode Local de Secours (Simulé)</strong>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 bg-slate-950/40 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[9px] text-gray-400 font-extrabold uppercase tracking-widest block">Identifiant Endpoint</span>
+                        <p className="font-mono text-[11px] text-sky-450 truncate font-semibold">
+                          {dbDiagnosis.connected ? dbDiagnosis.supabaseUrl : "Aucune connexion Cloud"}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center text-gray-400 animate-pulse">
+                      Exécution de l'algorithme de diagnostic...
+                    </div>
+                  )}
+
+                  {/* Summary information note */}
+                  <div className="text-[11px] leading-relaxed text-gray-400 bg-slate-950 p-3 rounded-xl border border-dashed border-slate-850 space-y-1 text-left">
+                    <p className="font-bold text-gray-300">💡 Commentaire de l'Assistance Technique :</p>
+                    <p>
+                      ReFaso Educ est équipé d'une résilience <strong>"Zero-Freeze"</strong>. En cas d'indisponibilité, 
+                      de tables manquantes ou de latence de votre compte Supabase, toutes les données (résultats, abonnés, récepissés) 
+                      sont stockées dans un stockage mémoire chiffré local du serveur <code>(local_db.json)</code>. Vos candidats ne perdront JAMAIS leur progression.
+                    </p>
+                  </div>
+
+                  {/* Tables Diagnostics */}
+                  {dbDiagnosis && dbDiagnosis.database && (
+                    <div className="space-y-3">
+                      <h4 className="text-[11px] font-black uppercase tracking-wider text-gray-400 text-left">
+                        📋 Examen de conformité des tables applicatives
+                      </h4>
+                      <div className="space-y-2.5 text-left">
+                        {Object.entries(dbDiagnosis.database).map(([tableName, statusInfo]: [string, any]) => (
+                          <div key={tableName} className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono font-bold text-white text-xs">
+                                🔗 Relation table : <code>public.{tableName}</code>
+                              </span>
+                              <span className={cn(
+                                "text-[10px] font-black uppercase px-2 py-0.5 rounded border",
+                                statusInfo.active 
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-550/15" 
+                                  : "bg-red-500/10 text-red-400 border-red-500/15"
+                              )}>
+                                {statusInfo.status}
+                              </span>
+                            </div>
+
+                            {statusInfo.active ? (
+                              <div className="text-[10px] text-gray-400 flex items-center justify-between">
+                                <span>Nombre total d'enregistrements en base de données :</span>
+                                <strong className="font-mono text-white text-xs bg-slate-900 px-2 py-0.5 rounded">{statusInfo.count} lignes</strong>
+                              </div>
+                            ) : (
+                              <div className="space-y-2 mt-1">
+                                <p className="text-red-400 font-mono text-[10px] leading-relaxed bg-red-950/25 p-2 rounded border border-red-500/10">
+                                  <strong>Détails de l'erreur :</strong> {statusInfo.error}
+                                </p>
+                                <p className="text-[10px] text-amber-300 leading-normal">
+                                  👉 <strong>Solution :</strong> {statusInfo.hint}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Restorability setup block */}
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2.5 text-left">
+                    <h4 className="font-black text-sky-400 text-[11px] uppercase tracking-wider flex items-center gap-1">
+                      🛠️ Script de Restauration SQL pour votre Tableau Supabase
+                    </h4>
+                    <p className="text-[10px] text-gray-400 leading-normal">
+                      Si vous observez des erreurs d'inaccessibilité de table, copiez simplement le code SQL ci-dessous 
+                      et collez-le dans la section <strong>SQL Editor</strong> de votre tableau de bord Supabase, puis cliquez sur <strong>Run</strong> :
+                    </p>
+                    <pre className="p-3 bg-slate-900 border border-slate-800 rounded-lg text-[9px] font-mono text-emerald-400 overflow-x-auto max-h-[160px] leading-normal scrollbar-none">
+{`-- COPIEZ CE CODE SQL ET EXÉCUTEZ-LE SUR VOTRE SQL EDITOR SUPABASE
+
+-- 1. Table des utilisateurs - profils Faso Educ
+CREATE TABLE IF NOT EXISTS public.profiles (
+    email TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    level TEXT NOT NULL,
+    target_exam TEXT,
+    region_name TEXT,
+    avatar TEXT DEFAULT '👨‍🎓',
+    is_premium BOOLEAN DEFAULT FALSE,
+    points INTEGER DEFAULT 0,
+    learning_streak INTEGER DEFAULT 0,
+    password TEXT DEFAULT '123456',
+    bound_device_id TEXT,
+    transfer_requested BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 2. Table des paiements de dépôts manuels (Orange Money / Moov / Wave)
+CREATE TABLE IF NOT EXISTS public.manual_payments (
+    id TEXT PRIMARY KEY,
+    user_email TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    operator TEXT NOT NULL,
+    amount INTEGER NOT NULL DEFAULT 2500,
+    reference TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3. Table des questions mises en favoris
+CREATE TABLE IF NOT EXISTS public.favorited_questions (
+    id TEXT PRIMARY KEY,
+    user_email TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    question_data TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 4. Table des cours rédigés
+CREATE TABLE IF NOT EXISTS public.courses (
+    id TEXT PRIMARY KEY,
+    user_email TEXT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    chapters TEXT NOT NULL,
+    level TEXT NOT NULL,
+    is_public BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5. Table des résultats et historisation des examens/concours
+CREATE TABLE IF NOT EXISTS public.quiz_results (
+    id TEXT PRIMARY KEY,
+    user_email TEXT NOT NULL,
+    author_name TEXT DEFAULT 'Candidat Élite',
+    is_public BOOLEAN DEFAULT FALSE,
+    subjects TEXT[] NOT NULL,
+    level TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    total_questions INTEGER NOT NULL,
+    percentage INTEGER NOT NULL,
+    questions TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);`}
+                    </pre>
+                  </div>
                 </div>
               </div>
             )}
