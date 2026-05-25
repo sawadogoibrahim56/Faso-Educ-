@@ -2031,21 +2031,46 @@ app.post("/api/history", async (req, res) => {
   if (supabaseAdmin) {
     try {
       let pgCreatedAt: string = cleanResult.date;
-      if (pgCreatedAt && pgCreatedAt.includes("/") && !pgCreatedAt.includes("-")) {
-        try {
-          const parts = pgCreatedAt.split(" ")[0].split("/");
-          if (parts.length === 3) {
-            const day = parseInt(parts[0], 10);
-            const month = parseInt(parts[1], 10) - 1;
-            const year = parseInt(parts[2], 10);
-            const parsedDate = new Date(year, month, day);
-            if (!isNaN(parsedDate.getTime())) {
-              pgCreatedAt = parsedDate.toISOString();
+      if (pgCreatedAt) {
+        const dateStr = String(pgCreatedAt).trim();
+        if (dateStr.includes("/") && !dateStr.includes("-")) {
+          try {
+            const parts = dateStr.split(" ");
+            const dateParts = parts[0].split("/");
+            if (dateParts.length === 3) {
+              const day = parseInt(dateParts[0], 10);
+              const month = parseInt(dateParts[1], 10) - 1;
+              const year = parseInt(dateParts[2], 10);
+              
+              let hh = 12, mm = 0, ss = 0;
+              if (parts[1]) {
+                const timeParts = parts[1].split(":");
+                if (timeParts.length >= 2) {
+                  hh = parseInt(timeParts[0], 10) || 12;
+                  mm = parseInt(timeParts[1], 10) || 0;
+                  ss = parseInt(timeParts[2], 10) || 0;
+                }
+              }
+              const d = new Date(year, month, day, hh, mm, ss);
+              if (!isNaN(d.getTime())) {
+                pgCreatedAt = d.toISOString();
+              }
             }
+          } catch (e) {
+            // ignore
           }
-        } catch (e) {
-          // ignore
+        } else {
+          try {
+            const d = new Date(pgCreatedAt);
+            if (!isNaN(d.getTime())) {
+              pgCreatedAt = d.toISOString();
+            }
+          } catch (e) {
+            // ignore
+          }
         }
+      } else {
+        pgCreatedAt = new Date().toISOString();
       }
 
       const upsertData: any = {
