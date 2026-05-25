@@ -32,6 +32,9 @@ export interface QuizResult {
   mode: QuizMode;
   questions: Question[];
   userAnswers: (number | null)[];
+  isPublic?: boolean;
+  authorName?: string;
+  authorEmail?: string;
 }
 
 export interface CourseData {
@@ -45,6 +48,8 @@ export interface CourseData {
     title: string;
     content: string;
   }[];
+  userEmail?: string;
+  isPublic?: boolean;
 }
 
 export interface ForumReply {
@@ -84,6 +89,8 @@ export interface UserProfile {
   learningStreak?: number;
   points?: number;
   password?: string;
+  boundDeviceId?: string;
+  transferRequested?: boolean;
 }
 
 export interface ManualPaymentTx {

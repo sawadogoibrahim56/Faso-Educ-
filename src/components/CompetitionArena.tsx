@@ -29,6 +29,7 @@ import { Question, Level, QuizSettings } from '../types';
 import { generateQuizQuestions } from '../services/geminiService';
 import { MathRenderer } from './MathRenderer';
 import { jsPDF } from 'jspdf';
+import { getApiUrl } from '../lib/api';
 
 const ProgressBar = ({ progress, color = "bg-faso-blue" }: { progress: number, color?: string }) => (
   <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
@@ -106,12 +107,20 @@ interface CompetitionArenaProps {
   onBack: () => void;
   onSaveToHistory: (result: any) => void;
   soundEnabled: boolean;
+  profile: any;
+  initialSharedRoomNumber?: number | null;
+  initialSharedInviteId?: string | null;
+  onlineUsers?: any[];
 }
 
 export const CompetitionArena: React.FC<CompetitionArenaProps> = ({ 
   onBack, 
   onSaveToHistory,
-  soundEnabled: initialSoundEnabled
+  soundEnabled: initialSoundEnabled,
+  profile,
+  initialSharedRoomNumber,
+  initialSharedInviteId,
+  onlineUsers = []
 }) => {
   // Stage: 'setup' | 'lobby' | 'active' | 'podium'
   const [stage, setStage] = useState<'setup' | 'lobby' | 'active' | 'podium'>('setup');
@@ -128,8 +137,21 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   const [customInvitations, setCustomInvitations] = useState<string[]>([]);
   const [newInviteName, setNewInviteName] = useState<string>("");
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
-  const [roomNumber] = useState<number>(() => Math.floor(Math.random() * 90000 + 10000));
-  
+  const [roomNumber, setRoomNumber] = useState<number>(() => {
+    return initialSharedRoomNumber || Math.floor(Math.random() * 90000 + 10000);
+  });
+  const [isMultiplayer, setIsMultiplayer] = useState<boolean>(!!initialSharedRoomNumber);
+  const [multiplayerRole, setMultiplayerRole] = useState<'host' | 'invitee' | null>(() => {
+    if (initialSharedRoomNumber) return 'invitee';
+    return null;
+  });
+  const [invitationStatus, setInvitationStatus] = useState<'none' | 'pending' | 'accepted' | 'rejected'>(() => {
+    if (initialSharedRoomNumber) return 'accepted';
+    return 'none';
+  });
+  const [invitedPeerName, setInvitedPeerName] = useState<string>("");
+  const [invitedPeerEmail, setInvitedPeerEmail] = useState<string>("");
+
   // Game Play State
   const [loadingQuestions, setLoadingQuestions] = useState<boolean>(false);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -150,6 +172,279 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const responseTimersRef = useRef<number[]>([]);
 
+  // Sound play function
+  const playSound = (type: 'correct' | 'wrong' | 'countdown' | 'finish' | 'chat') => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      const now = audioCtx.currentTime;
+      
+      if (type === 'correct') {
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      } else if (type === 'wrong') {
+        osc.frequency.setValueAtTime(220, now); // A3
+        osc.frequency.setValueAtTime(147, now + 0.15); // D3
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.4);
+      } else if (type === 'countdown') {
+        osc.frequency.setValueAtTime(440, now); // A4
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      } else if (type === 'finish') {
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+        osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+        osc.frequency.setValueAtTime(1046.50, now + 0.3); // C6
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        osc.start(now);
+        osc.stop(now + 0.5);
+      } else if (type === 'chat') {
+        osc.frequency.setValueAtTime(880, now); // A5
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+        osc.start(now);
+        osc.stop(now + 0.06);
+      }
+    } catch (e) {
+      // AudioContext fails gracefully in quiet mode browser contexts
+    }
+  };
+
+  // Skip setup logic if loaded via joining a duel room number
+  useEffect(() => {
+    if (initialSharedRoomNumber) {
+      setRoomNumber(initialSharedRoomNumber);
+      setIsMultiplayer(true);
+      setMultiplayerRole('invitee');
+      setStage('lobby');
+      
+      setChatMessages([
+        {
+          id: 'chat-init-invitee',
+          senderName: 'Système Duel',
+          isAI: false,
+          isUser: false,
+          text: `Vous avez rejoint le salon de défi en direct #${initialSharedRoomNumber} ! Attente de lancement par l'hôte.`,
+          time: 'Instant'
+        }
+      ]);
+    }
+  }, [initialSharedRoomNumber]);
+
+  // Real-time server-side status tracker for Multiplayer games
+  useEffect(() => {
+    if (!isMultiplayer || !roomNumber) return;
+
+    let isPollingAlive = true;
+    const pollRoomStatus = async () => {
+      try {
+        const res = await fetch(getApiUrl(`/api/competition/room/status/${roomNumber}`));
+        if (res.ok && isPollingAlive) {
+          const data = await res.json();
+          if (data.success && data.roomState) {
+            const room = data.roomState;
+            const invite = data.invitation;
+
+            // Synchronize configuration parameters
+            if (invite) {
+              setInvitationStatus(invite.status);
+              setSubject(invite.subject);
+              setLevel(invite.level);
+              setQuestionCount(invite.questionCount);
+              setTimeLimit(invite.timeLimit);
+            }
+
+            const hostEmail = room.hostEmail;
+            const hostName = room.hostName;
+            const inviteeEmail = room.inviteeEmail;
+            const inviteeName = room.inviteeName;
+
+            const isCurrentHost = profile?.email?.toLowerCase().trim() === hostEmail.toLowerCase().trim();
+            setMultiplayerRole(isCurrentHost ? 'host' : 'invitee');
+
+            // In LOBBY stage, monitor acceptances
+            if (stage === 'lobby') {
+              const hostPart: Participant = {
+                id: hostEmail,
+                name: isCurrentHost ? "Vous (Hôte)" : `${hostName} (Hôte)`,
+                isAI: false,
+                score: 0,
+                accuracy: 1.0,
+                speed: 0,
+                status: 'waiting'
+              };
+
+              const inviteePart: Participant = {
+                id: inviteeEmail,
+                name: !isCurrentHost ? "Vous (Challenger)" : `${inviteeName} (Challenger)`,
+                isAI: false,
+                score: 0,
+                accuracy: 1.0,
+                speed: 0,
+                status: invite && invite.status === 'accepted' ? 'waiting' : 'thinking'
+              };
+
+              setParticipants([hostPart, inviteePart]);
+
+              // Automatically start active play if host transitions server
+              if (room.status === 'active' && room.questions && room.questions.length > 0) {
+                setQuestions(room.questions);
+                setCurrentQuestionIndex(room.currentQuestionIndex);
+                setLeftTime(invite?.timeLimit || timeLimit);
+                setStage('active');
+                setUserAnswer(null);
+                setUserAnswers(new Array(room.questions.length).fill(null));
+                setShowFeedback(false);
+              }
+            }
+
+            // In ACTIVE game stage
+            else if (stage === 'active') {
+              const answers = room.answers || {};
+              const hostAnswers = answers[hostEmail] || {};
+              const inviteeAnswers = answers[inviteeEmail] || {};
+
+              const sumScore = (userAnsMap: any) => {
+                let sum = 0;
+                Object.keys(userAnsMap).forEach((idxStr) => {
+                  const idx = Number(idxStr);
+                  if (idx < currentQuestionIndex) {
+                    sum += userAnsMap[idx]?.scoreAdded || 0;
+                  }
+                });
+                return sum;
+              };
+
+              const hostCurrentAnswer = hostAnswers[currentQuestionIndex];
+              const inviteeCurrentAnswer = inviteeAnswers[currentQuestionIndex];
+
+              const isCurrentUserHost = isCurrentHost;
+              const myCurrentAnswer = isCurrentUserHost ? hostCurrentAnswer : inviteeCurrentAnswer;
+              const peerCurrentAnswer = isCurrentUserHost ? inviteeCurrentAnswer : hostCurrentAnswer;
+
+              const myPart: Participant = {
+                id: isCurrentUserHost ? hostEmail : inviteeEmail,
+                name: isCurrentUserHost ? "Vous (Hôte)" : "Vous (Challenger)",
+                isAI: false,
+                score: sumScore(isCurrentUserHost ? hostAnswers : inviteeAnswers) + (myCurrentAnswer?.scoreAdded || 0),
+                accuracy: 1.0,
+                speed: 0,
+                status: myCurrentAnswer ? 'answered' : 'thinking',
+                lastSelectedOption: myCurrentAnswer?.optionIdx,
+                lastAnswerCorrect: myCurrentAnswer?.isCorrect,
+                lastTimeTaken: myCurrentAnswer?.timeTaken
+              };
+
+              const peerPart: Participant = {
+                id: isCurrentUserHost ? inviteeEmail : hostEmail,
+                name: isCurrentUserHost ? `${inviteeName} (Challenger)` : `${hostName} (Hôte)`,
+                isAI: false,
+                score: sumScore(isCurrentUserHost ? inviteeAnswers : hostAnswers) + (peerCurrentAnswer?.scoreAdded || 0),
+                accuracy: 1.0,
+                speed: 0,
+                status: peerCurrentAnswer ? 'answered' : 'thinking',
+                lastSelectedOption: peerCurrentAnswer?.optionIdx,
+                lastAnswerCorrect: peerCurrentAnswer?.isCorrect,
+                lastTimeTaken: peerCurrentAnswer?.timeTaken
+              };
+
+              setParticipants([myPart, peerPart]);
+
+              // Setup local answer state based on server synced profile status
+              if (myCurrentAnswer && userAnswer === null) {
+                // If it was already processed on backend, match local variable
+                setUserAnswer(myCurrentAnswer.optionIdx);
+              }
+
+              // Automatically reveal answers if BOTH have answered!
+              if (myCurrentAnswer && peerCurrentAnswer && !showFeedback) {
+                setShowFeedback(true);
+                setFeedbackTimeLeft(8);
+                playSound(myCurrentAnswer.isCorrect ? 'correct' : 'wrong');
+              }
+
+              // Synchronise transitions to the next indices
+              if (room.currentQuestionIndex !== currentQuestionIndex) {
+                if (room.currentQuestionIndex < room.questions.length) {
+                  setCurrentQuestionIndex(room.currentQuestionIndex);
+                  setLeftTime(invite?.timeLimit || timeLimit);
+                  setUserAnswer(null);
+                  setShowFeedback(false);
+                } else {
+                  playSound('finish');
+                  setStage('podium');
+                }
+              }
+              
+              if (room.status === 'podium' && stage !== 'podium') {
+                playSound('finish');
+                setStage('podium');
+              }
+            }
+
+            // In PODIUM final summary page
+            else if (stage === 'podium') {
+              const answers = room.answers || {};
+              const hostAnswers = answers[hostEmail] || {};
+              const inviteeAnswers = answers[inviteeEmail] || {};
+
+              const sumTotalScore = (userAnsMap: any): number => {
+                return (Object.values(userAnsMap) as any[]).reduce((sum: number, ans: any) => sum + (ans?.scoreAdded || 0), 0);
+              };
+
+              const myPart: Participant = {
+                id: isCurrentHost ? hostEmail : inviteeEmail,
+                name: isCurrentHost ? "Vous (Hôte)" : "Vous (Challenger)",
+                isAI: false,
+                score: sumTotalScore(isCurrentHost ? hostAnswers : inviteeAnswers),
+                accuracy: 1.0,
+                speed: 0,
+                status: 'waiting'
+              };
+
+              const peerPart: Participant = {
+                id: isCurrentHost ? inviteeEmail : hostEmail,
+                name: isCurrentHost ? `${inviteeName} (Challenger)` : `${hostName} (Hôte)`,
+                isAI: false,
+                score: sumTotalScore(isCurrentHost ? inviteeAnswers : hostAnswers),
+                accuracy: 1.0,
+                speed: 0,
+                status: 'waiting'
+              };
+
+              setParticipants([myPart, peerPart]);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to synchronise room:", err);
+      }
+    };
+
+    pollRoomStatus();
+    const interval = setInterval(pollRoomStatus, 1500);
+
+    return () => {
+      isPollingAlive = false;
+      clearInterval(interval);
+    };
+  }, [isMultiplayer, roomNumber, stage, currentQuestionIndex, showFeedback, userAnswer, profile]);
+
   // Setup options for subjects
   const subjectSuggestions = [
     { title: "Microéconomie (Optimisation, Cobb-Douglas, Coûts marginaux)", category: "Microéconomie" },
@@ -158,51 +453,6 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     { title: "Politiques Publiques & Finances Nationales de l'UEMOA", category: "Économie du Développement" },
     { title: "Mathématiques Générales & Algèbre Linéaire des Concours", category: "Mathématiques" }
   ];
-
-  // Sound generator
-  const playSound = (type: 'correct' | 'wrong' | 'countdown' | 'finish') => {
-    if (!soundEnabled) return;
-    try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-
-      if (type === 'correct') {
-        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.3);
-      } else if (type === 'wrong') {
-        osc.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
-        osc.frequency.setValueAtTime(147, audioCtx.currentTime + 0.1); // D3
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.4);
-      } else if (type === 'countdown') {
-        osc.frequency.setValueAtTime(440, audioCtx.currentTime); 
-        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.1);
-      } else if (type === 'finish') {
-        osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-        osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
-        osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
-        osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime + 0.3); // C6
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.6);
-      }
-    } catch (e) {
-      console.warn("Audio Context blocked or unsupported:", e);
-    }
-  };
 
   // Build the live dynamic lobby
   const handleStartLobby = () => {
@@ -285,6 +535,55 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     setCustomInvitations(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const handleSendDirectInvite = async (targetEmail: string, targetName: string) => {
+    try {
+      const resp = await fetch(getApiUrl('/api/competition/invite'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostEmail: profile?.email || `host-${roomNumber}@faso.bf`,
+          hostName: profile?.name || `Élève Hôte`,
+          inviteeEmail: targetEmail,
+          roomNumber,
+          subject,
+          level,
+          questionCount,
+          timeLimit
+        })
+      });
+      if (resp.ok) {
+        playSound('chat');
+        setIsMultiplayer(true);
+        setMultiplayerRole('host');
+        setInvitedPeerName(targetName);
+        setInvitedPeerEmail(targetEmail);
+        
+        // Push notification message
+        setChatMessages(prev => [
+          {
+            id: `chat-inv-${Date.now()}`,
+            senderName: 'Système Duel',
+            isAI: false,
+            isUser: false,
+            text: `Invitation envoyée à ${targetName} (${targetEmail}). En attente de son acceptation...`,
+            time: 'Maintenant'
+          },
+          ...prev
+        ]);
+        
+        // Also add them to customInvitations if appropriate
+        setCustomInvitations(prev => {
+          if (!prev.includes(targetName)) {
+            return [...prev, targetName];
+          }
+          return prev;
+        });
+      }
+    } catch (e) {
+      console.error("Failed to send direct invite:", e);
+    }
+  };
+
   const copySimulatedLink = () => {
     setCopiedLink(true);
     const domain = typeof window !== 'undefined' ? window.location.origin : "https://faso-educ-frontend.onrender.com";
@@ -315,6 +614,22 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
         setUserAnswers(new Array(generated.length).fill(null));
         setShowFeedback(false);
         setIsPaused(false);
+
+        // Sync to server if multiplayer
+        if (isMultiplayer && roomNumber) {
+          try {
+            await fetch(getApiUrl('/api/competition/room/start'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                roomNumber,
+                questions: generated
+              })
+            });
+          } catch (err) {
+            console.warn("Error starting room on server:", err);
+          }
+        }
         
         // Clear all response statuses
         setParticipants(prev => prev.map(p => ({
@@ -477,17 +792,36 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     const isCorrect = optionIdx === questions[currentQuestionIndex].correctAnswer;
     playSound(isCorrect ? 'correct' : 'wrong');
 
-    // Update User participant properties
     const timeTaken = timeLimit - timeLeft;
+    const scoreAdded = isCorrect ? Math.round(20 * (timeLeft / timeLimit) + 20) : 0;
+
+    // Sync to matchmaking backend if in multiplayer
+    if (isMultiplayer && roomNumber) {
+      fetch(getApiUrl('/api/competition/room/answer'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomNumber,
+          email: profile?.email,
+          questionIndex: currentQuestionIndex,
+          optionIdx,
+          isCorrect,
+          timeTaken,
+          scoreAdded
+        })
+      }).catch(err => console.warn("Failed to publish live answer:", err));
+    }
+
+    // Update User participant properties
     setParticipants(prev => prev.map(p => {
-      if (p.id === 'current-user') {
+      if (p.id === 'current-user' || p.id === profile?.email) {
         return {
           ...p,
           status: 'answered',
           lastTimeTaken: timeTaken,
           lastSelectedOption: optionIdx,
           lastAnswerCorrect: isCorrect,
-          score: p.score + (isCorrect ? Math.round(20 * (timeLeft / timeLimit) + 20) : 0) // Speed-weighted scoring
+          score: p.score + scoreAdded
         };
       }
       return p;
@@ -499,6 +833,23 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     setShowFeedback(true);
     setFeedbackTimeLeft(8);
     if (timerRef.current) clearInterval(timerRef.current);
+
+    // Sync timeout/missing answer in multiplayer
+    if (isMultiplayer && roomNumber && userAnswer === null) {
+      fetch(getApiUrl('/api/competition/room/answer'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomNumber,
+          email: profile?.email,
+          questionIndex: currentQuestionIndex,
+          optionIdx: -1,
+          isCorrect: false,
+          timeTaken: timeLimit,
+          scoreAdded: 0
+        })
+      }).catch(err => console.warn("Failed to publish timing out:", err));
+    }
 
     // Stop pending teammate submission simulators and resolve them instantly
     responseTimersRef.current.forEach(t => clearTimeout(t));
@@ -567,6 +918,18 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
   // Advance to next question or complete and go to Podium
   const handleNextQuestion = () => {
+    if (isMultiplayer && roomNumber) {
+      fetch(getApiUrl('/api/competition/room/next'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomNumber,
+          nextIndex: currentQuestionIndex + 1
+        })
+      }).catch(err => console.warn("Failed to advance index on server:", err));
+      return;
+    }
+
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(prev => prev + 1);
       setLeftTime(timeLimit);
@@ -1042,10 +1405,61 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                 </p>
               </div>
 
+              {/* Interactive real-time online list */}
+              <div className="space-y-3 pt-2 border-t dark:border-gray-850">
+                <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse inline-block"></span>
+                  Élèves Réels connectés en direct ({onlineUsers.filter(u => u.email !== profile?.email).length})
+                </label>
+                
+                {onlineUsers.filter(u => u.email !== profile?.email).length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {onlineUsers.filter(u => u.email !== profile?.email).map((usr) => {
+                      const isInvited = customInvitations.includes(usr.name);
+                      return (
+                        <div 
+                          key={usr.email}
+                          className="flex items-center justify-between p-2.5 bg-white dark:bg-gray-900 border dark:border-gray-850 rounded-xl shadow-xs"
+                        >
+                          <div className="flex items-center gap-2 max-w-[65%] font-sans">
+                            <span className="text-sm shrink-0">{usr.avatar || '👨‍🎓'}</span>
+                            <div className="text-left leading-normal">
+                              <span className="font-extrabold text-xs dark:text-gray-100 block truncate">
+                                {usr.name} {usr.isPremium && <span className="text-amber-500">🏆</span>}
+                              </span>
+                              <span className="text-[9px] text-gray-400 block font-mono truncate">{usr.email} • {usr.level}</span>
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => handleSendDirectInvite(usr.email, usr.name)}
+                            disabled={isInvited}
+                            className={cn(
+                              "px-3 py-1.5 font-extrabold text-[10px] rounded-lg transition-all shadow-xs flex items-center gap-1 select-none cursor-pointer",
+                              isInvited
+                                ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500 cursor-not-allowed"
+                                : "bg-faso-green hover:bg-green-600 text-white"
+                            )}
+                          >
+                            {isInvited ? "Défi Lancé ✓" : "Défier 💥"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-white dark:bg-gray-900/60 rounded-xl border border-dashed dark:border-gray-850 text-center font-sans">
+                    <p className="text-[10px] text-gray-450 italic leading-relaxed">
+                      Aucun autre élève n'est en ligne pour le moment. Ouvrez l'application dans un autre navigateur ou invitez des amis à se connecter !
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Humans dynamic invite list */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-400 uppercase">Inviter des amis ou réviseurs</label>
-                <div className="flex gap-2">
+              <div className="space-y-2 pt-2 border-t dark:border-gray-850">
+                <label className="text-xs font-bold text-gray-400 uppercase">Simuler d'autres candidats (Robots)</label>
+                <div className="flex gap-2 font-sans">
                   <input
                     type="text"
                     value={newInviteName}
@@ -1057,16 +1471,16 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     onClick={handleAddInviteName}
                     className="px-4 py-2 bg-faso-blue text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0"
                   >
-                    <Plus size={14} /> Inviter
+                    <Plus size={14} /> Ajouter
                   </button>
                 </div>
 
                 {customInvitations.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
+                  <div className="flex flex-wrap gap-1.5 pt-1 font-sans">
                     {customInvitations.map((name, idx) => (
                       <span 
                         key={idx}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-faso-green/10 text-faso-green rounded-full text-xs font-bold font-sans"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-faso-green/10 text-faso-green rounded-full text-xs font-bold"
                       >
                         {name}
                         <button onClick={() => handleRemoveInvite(idx)}>
@@ -1076,8 +1490,8 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[10px] text-gray-400 italic">
-                    Aucun candidat humain invité à ce stade. Ajoutez-en ou lancez seul contre les IAs !
+                  <p className="text-[10px] text-gray-400 italic font-sans">
+                    Aucun candidat robot additionnel activé.
                   </p>
                 )}
               </div>

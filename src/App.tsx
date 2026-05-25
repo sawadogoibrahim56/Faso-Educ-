@@ -53,6 +53,19 @@ import { FileText, Sparkles, BookOpenCheck, RefreshCw, MessageSquare, ThumbsUp, 
 
 // --- Components ---
 
+function getOrGenerateDeviceId(): string {
+  if (typeof window === 'undefined') return 'unknown';
+  let devId = localStorage.getItem('faso_educ_device_id');
+  if (!devId) {
+    const rand = Math.floor(Math.random() * 100000000);
+    const platform = navigator.platform || 'Browser';
+    const cpu = navigator.hardwareConcurrency || 4;
+    devId = `dev_${platform.replace(/[^a-zA-Z0-9]/g, '')}_${cpu}_${rand}`;
+    localStorage.setItem('faso_educ_device_id', devId);
+  }
+  return devId;
+}
+
 const ProgressBar = ({ progress, color = "bg-faso-blue" }: { progress: number, color?: string }) => (
   <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
     <motion.div 
@@ -137,6 +150,75 @@ export default function App() {
       simulatedTimeShiftDays: 0,
     };
   });
+
+  // --- REAL-TIME SYNCHRONIZED MATCHMAKING STATE ---
+  const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
+  const [incomingInvites, setIncomingInvites] = useState<any[]>([]);
+  const [activeInviteDialog, setActiveInviteDialog] = useState<any | null>(null);
+  const [initialSharedRoomNumber, setInitialSharedRoomNumber] = useState<number | null>(null);
+  const [initialSharedInviteId, setInitialSharedInviteId] = useState<string | null>(null);
+
+  // Poll server for registration & presence check
+  useEffect(() => {
+    let isActive = true;
+    
+    // Auto sync guest or professional emails securely
+    const userEmail = profile.email || (() => {
+      let cached = localStorage.getItem('faso_educ_guest_email');
+      if (!cached) {
+        cached = `cand-${Math.floor(Math.random() * 900000 + 100000)}@faso.local`;
+        localStorage.setItem('faso_educ_guest_email', cached);
+      }
+      return cached;
+    })();
+    const userName = profile.name || (() => {
+      let cached = localStorage.getItem('faso_educ_guest_name');
+      if (!cached) {
+        cached = `Élève #${Math.floor(Math.random() * 9000 + 1000)}`;
+        localStorage.setItem('faso_educ_guest_name', cached);
+      }
+      return cached;
+    })();
+
+    const syncPresence = async () => {
+      if (!isActive) return;
+      try {
+        const bodyObj = {
+          email: userEmail,
+          name: userName,
+          level: profile.level || "Licence",
+          avatar: profile.isPremium ? "🏆" : "👨‍🎓",
+          isPremium: !!profile.isPremium
+        };
+        const res = await fetch(getApiUrl('/api/competition/presence'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyObj)
+        });
+        if (res.ok && isActive) {
+          const data = await res.json();
+          if (data.success) {
+            setOnlineUsers(data.onlineUsers || []);
+            const pending = data.pendingInvitations || [];
+            setIncomingInvites(pending);
+            if (pending.length > 0 && !activeInviteDialog) {
+              setActiveInviteDialog(pending[0]);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed syncing presence:", err);
+      }
+    };
+
+    syncPresence();
+    const interval = setInterval(syncPresence, 4000);
+
+    return () => {
+      isActive = false;
+      clearInterval(interval);
+    };
+  }, [profile, activeInviteDialog]);
 
   // Full-Stack Synchronization & Admin Security States
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => {
@@ -279,7 +361,21 @@ export default function App() {
 
     async function syncProfileWithBackend() {
       try {
-        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}`));
+        const deviceId = getOrGenerateDeviceId();
+        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}?deviceId=${deviceId}`));
+        
+        if (res.status === 403 && isActive) {
+          const errData = await res.json();
+          if (errData.error === 'device_locked') {
+            alert("⚠️ Accès déconnecté : Ce compte candidat est maintenant synchronisé et actif sur un autre appareil mobile.");
+            // Log out user
+            setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+            localStorage.removeItem('faso_educ_jwt_token');
+            localStorage.removeItem('faso_educ_user_profile');
+            return;
+          }
+        }
+
         if (res.ok && isActive) {
           const serverProf = await res.json();
           if (serverProf && serverProf.registered) {
@@ -298,7 +394,7 @@ export default function App() {
         await fetch(getApiUrl('/api/profiles/sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(profile)
+          body: JSON.stringify({ ...profile, deviceId })
         });
       } catch (err) {
         console.warn("Syncing fallback local profile mode active.", err);
@@ -1271,6 +1367,21 @@ export default function App() {
     );
   };
 
+  const handleToggleQuizPublic = async (resItem: QuizResult) => {
+    const updated = { ...resItem, isPublic: !resItem.isPublic };
+    setHistory(prev => prev.map(h => h.id === resItem.id ? updated : h));
+    try {
+      await fetch(getApiUrl('/api/history'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result: updated })
+      });
+    } catch (e) {
+      console.warn("Failed to toggle quiz public state:", e);
+      setHistory(prev => prev.map(h => h.id === resItem.id ? resItem : h));
+    }
+  };
+
   const renderHistory = () => (
     <div className="p-6 space-y-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between">
@@ -1350,6 +1461,24 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Quiz Community Sharing toggle */}
+              <div className="pt-2 border-t dark:border-gray-800 flex items-center justify-between text-xs">
+                <span className="text-gray-400 font-bold">
+                  {res.isPublic ? (
+                    <span className="text-emerald-500 flex items-center gap-1">🌐 Publié dans la communauté</span>
+                  ) : (
+                    <span className="text-gray-400 flex items-center gap-1">🔒 Privé dans votre bibliothèque</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleToggleQuizPublic(res)}
+                  className="px-2.5 py-1 bg-faso-blue/15 hover:bg-faso-blue/25 text-faso-blue text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer"
+                >
+                  {res.isPublic ? "Rendre privé 🔒" : "Publier 🌐"}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -1370,17 +1499,47 @@ export default function App() {
         ...newC,
         id: `course-custom-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         subject: customCourseTopic,
-        level: selectedCourseLevel
+        level: selectedCourseLevel,
+        userEmail: profile.email || 'candidat@test.bf',
+        isPublic: false
       };
+      
       setGeneratedCourses(prev => [withId, ...prev]);
       setSelectedCourse(withId);
       setActiveChapterIndex(0);
       setCustomCourseTopic('');
+
+      // Persist to backend
+      try {
+        await fetch(getApiUrl('/api/courses'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ course: withId })
+        });
+      } catch (dbErr) {
+        console.warn("Offline backend course saving fallback:", dbErr);
+      }
     } catch (e) {
       console.error(e);
       alert("Une erreur est survenue lors de la génération automatique du cours. Veuillez réessayer.");
     } finally {
       setIsGeneratingCourse(false);
+    }
+  };
+
+  const handleToggleCoursePublic = async (course: CourseData) => {
+    const updated = { ...course, isPublic: !course.isPublic };
+    setGeneratedCourses(prev => prev.map(c => c.id === course.id ? updated : c));
+    try {
+      await fetch(getApiUrl('/api/courses'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course: updated })
+      });
+    } catch (e) {
+      console.warn("Failed to toggle public state:", e);
+      // rollback
+      setGeneratedCourses(prev => prev.map(c => c.id === course.id ? course : c));
     }
   };
 
@@ -1681,6 +1840,33 @@ export default function App() {
                     <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed line-clamp-2 mt-1">
                       {course.description}
                     </p>
+
+                    {/* Publication badges/actions */}
+                    {course.userEmail && (
+                      <div className="pt-2 flex items-center justify-between text-[11px] bg-slate-50 dark:bg-slate-900/40 p-2 rounded-xl border border-gray-150 dark:border-gray-800">
+                        {course.userEmail.toLowerCase() === profile.email?.toLowerCase() ? (
+                          <>
+                            <span className="flex items-center gap-1 font-bold text-gray-405">
+                              {course.isPublic ? (
+                                <span className="text-emerald-500 flex items-center gap-1">🌐 Publié dans la communauté</span>
+                              ) : (
+                                <span className="text-gray-400 flex items-center gap-1">🔒 Votre cours privé</span>
+                              )}
+                            </span>
+                            <button
+                              onClick={() => handleToggleCoursePublic(course)}
+                              className="px-2.5 py-1 bg-faso-blue/15 hover:bg-faso-blue/25 text-faso-blue border border-faso-blue/20 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all"
+                            >
+                              {course.isPublic ? "Rendre privé 🔒" : "Publier 🌐"}
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-gray-400 italic">
+                            Créé par : <strong className="text-teal-500 font-mono text-[10px]">{course.userEmail.split('@')[0]}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between border-t dark:border-gray-800 mt-4 pt-3 text-xs">
@@ -2325,13 +2511,23 @@ export default function App() {
     );
   };
 
-  const [authMode, setAuthMode] = useState<'register' | 'login'>('register');
+  const [authMode, setAuthMode] = useState<'register' | 'login' | 'forgot' | 'reset'>('register');
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('123456');
   const [regLevel, setRegLevel] = useState<Level>('Licence');
   const [regSimTime, setRegSimTime] = useState<'normal' | 'expired'>('normal');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isDeviceLocked, setIsDeviceLocked] = useState(false);
+  const [lockedEmail, setLockedEmail] = useState('');
+  const [transferStatusMsg, setTransferStatusMsg] = useState<string | null>(null);
+
+  // States for password recovery flow
+  const [recoveryOtp, setRecoveryOtp] = useState('');
+  const [recoveryNewPass, setRecoveryNewPass] = useState('');
+  const [recoveryConfirmPass, setRecoveryConfirmPass] = useState('');
+  const [recoverySuccess, setRecoverySuccess] = useState<string | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
 
   // States for changing password in profile space
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
@@ -2343,6 +2539,9 @@ export default function App() {
     e.preventDefault();
     if (!regName.trim() || !regEmail.trim() || !regPassword.trim()) return;
     setAuthError(null);
+    setIsDeviceLocked(false);
+    setLockedEmail('');
+    setTransferStatusMsg(null);
 
     const date = new Date();
     if (regSimTime === 'expired') {
@@ -2364,6 +2563,7 @@ export default function App() {
       console.warn("Offline check during registration:", err);
     }
 
+    const deviceId = getOrGenerateDeviceId();
     const newProfile: UserProfile = {
       registered: true,
       name: regName.trim(),
@@ -2377,8 +2577,26 @@ export default function App() {
       learningStreak: 1,
       points: 100,
       targetExam: 'Inspecteur des Douanes',
-      regionName: 'Centre (Ouagadougou)'
+      regionName: 'Centre (Ouagadougou)',
+      boundDeviceId: deviceId
     };
+
+    // Synchronously force save registration to backend local DB to guarantee persistency
+    try {
+      const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newProfile, deviceId })
+      });
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        if (syncData.token) {
+          localStorage.setItem('faso_educ_jwt_token', syncData.token);
+        }
+      }
+    } catch (e) {
+      console.warn("Direct backend registration sync failed (offline or container setup delay), using local storage state:", e);
+    }
 
     setProfile(newProfile);
     playSound('finish');
@@ -2388,9 +2606,26 @@ export default function App() {
     e.preventDefault();
     if (!regEmail.trim() || !regPassword.trim()) return;
     setAuthError(null);
+    setIsDeviceLocked(false);
+    setLockedEmail('');
+    setTransferStatusMsg(null);
+
+    const deviceId = getOrGenerateDeviceId();
 
     try {
-      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}`));
+      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}?deviceId=${deviceId}`));
+      
+      if (res.status === 403) {
+        const errData = await res.json();
+        if (errData.error === 'device_locked') {
+          setAuthError(errData.message);
+          setIsDeviceLocked(true);
+          setLockedEmail(regEmail.trim().toLowerCase());
+          playSound('wrong');
+          return;
+        }
+      }
+
       if (res.ok) {
         const existingProf = await res.json();
         if (existingProf && existingProf.registered) {
@@ -2409,14 +2644,16 @@ export default function App() {
               points: existingProf.points || 120,
               targetExam: existingProf.targetExam || 'Concours Direct',
               regionName: existingProf.regionName || 'Centre (Ouagadougou)',
-              password: serverPass
+              password: serverPass,
+              boundDeviceId: existingProf.boundDeviceId || deviceId
             });
             playSound('finish');
+            return;
           } else {
             setAuthError("Mot de passe incorrect !");
             playSound('wrong');
+            return;
           }
-          return;
         }
       }
     } catch (err) {
@@ -2447,6 +2684,114 @@ export default function App() {
     playSound('wrong');
   };
 
+  const handleRequestTransfer = async () => {
+    if (!lockedEmail) return;
+    setTransferStatusMsg("Envoi de la demande en cours...");
+    try {
+      const res = await fetch(getApiUrl('/api/profiles/request-transfer'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: lockedEmail })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTransferStatusMsg(data.message);
+      } else {
+        setTransferStatusMsg("Une erreur s'est produite lors de l'envoi de la demande.");
+      }
+    } catch (e) {
+      setTransferStatusMsg("Une erreur s'est produite. Veuillez réessayer.");
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regEmail.trim()) {
+      setAuthError("Veuillez saisir votre adresse e-mail.");
+      return;
+    }
+    setAuthError(null);
+    setRecoverySuccess(null);
+    setIsRecovering(true);
+
+    try {
+      const res = await fetch(getApiUrl('/api/auth/forgot-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail.trim().toLowerCase() })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setRecoverySuccess(data.message);
+        // Switch to reset mode so they can type the OTP code and set password!
+        setAuthMode('reset');
+        playSound('correct');
+      } else {
+        setAuthError(data.error || "Une erreur s'est produite.");
+        playSound('wrong');
+      }
+    } catch (err) {
+      setAuthError("Impossible de contacter le serveur de sécurité. Veuillez vérifier votre connexion.");
+      playSound('wrong');
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recoveryOtp.trim() || !recoveryNewPass.trim() || !recoveryConfirmPass.trim()) {
+      setAuthError("Veuillez remplir tous les champs de réinitialisation.");
+      return;
+    }
+
+    if (recoveryNewPass.trim().length < 6) {
+      setAuthError("Le nouveau mot de passe doit comporter au moins 6 caractères.");
+      return;
+    }
+
+    if (recoveryNewPass.trim() !== recoveryConfirmPass.trim()) {
+      setAuthError("Les deux mots de passe ne correspondent pas !");
+      return;
+    }
+
+    setAuthError(null);
+    setIsRecovering(true);
+
+    try {
+      const res = await fetch(getApiUrl('/api/auth/reset-password'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: regEmail.trim().toLowerCase(),
+          code: recoveryOtp.trim(),
+          newPassword: recoveryNewPass.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        // Password reset successfully! Restore default state
+        setRecoverySuccess(data.message);
+        setRecoveryOtp('');
+        setRecoveryNewPass('');
+        setRecoveryConfirmPass('');
+        // Switch to login so they can log in with new credentials!
+        setAuthMode('login');
+        playSound('correct');
+      } else {
+        setAuthError(data.error || "Code de récupération incorrect ou expiré.");
+        playSound('wrong');
+      }
+    } catch (err) {
+      setAuthError("Erreur réseau. Impossible de réaliser la réinitialisation.");
+      playSound('wrong');
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
   const renderRegistration = () => {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
@@ -2467,134 +2812,160 @@ export default function App() {
           </div>
 
           {/* S'enregistrer / Se connecter Switch Tabs */}
-          <div className="flex bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl mb-5">
-            <button
-              type="button"
-              onClick={() => { setAuthMode('register'); setAuthError(null); }}
-              className={cn(
-                "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
-                authMode === 'register' 
-                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
-                  : "text-gray-400 hover:text-white"
-              )}
-            >
-              Créer un compte
-            </button>
-            <button
-              type="button"
-              onClick={() => { setAuthMode('login'); setAuthError(null); }}
-              className={cn(
-                "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
-                authMode === 'login' 
-                  ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
-                  : "text-gray-400 hover:text-white"
-              )}
-            >
-              Se connecter
-            </button>
-          </div>
-
-          {authError && (
-            <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold text-center mb-5">
-              ⚠️ {authError}
+          {(authMode === 'register' || authMode === 'login') && (
+            <div className="flex bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl mb-5">
+              <button
+                type="button"
+                onClick={() => { setAuthMode('register'); setAuthError(null); setRecoverySuccess(null); }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
+                  authMode === 'register' 
+                    ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
+                    : "text-gray-400 hover:text-white"
+                )}
+              >
+                Créer un compte
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode('login'); setAuthError(null); setRecoverySuccess(null); }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-center",
+                  authMode === 'login' 
+                    ? "bg-gradient-to-r from-faso-green to-faso-blue text-slate-950 shadow-md" 
+                    : "text-gray-400 hover:text-white"
+                )}
+              >
+                Se connecter
+              </button>
             </div>
           )}
 
-          {authMode === 'register' ? (
-            <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-xs text-gray-300 space-y-2 leading-relaxed">
-              <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
-                ✨ Votre Port d'Inscription Académique
-              </p>
-              <p className="text-start">
-                Inscrivez-vous instantanément pour bénéficier d'une <strong>période d'essai gratuite de 7 jours</strong>. Accédez à la génération automatique de quiz intelligents, à l'arène de compétition, et aux fiches récapitulatives d'élite.
-              </p>
-            </div>
-          ) : null}
-
-          {authMode === 'register' ? (
-            <form onSubmit={handleRegisterSubmit} className="space-y-4 text-start">
-              <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Nom complet
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex. Ibrahim Sawadogo"
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Adresse Email
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="votre.nom@compte.com"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Mot de passe sécurisé
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Minimum 6 caractères"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider text-ellipsis overflow-hidden">
-                    Niveau Académique
-                  </label>
-                  <select
-                    value={regLevel}
-                    onChange={(e) => setRegLevel(e.target.value as Level)}
-                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white cursor-pointer"
+          {authError && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold text-center mb-5 space-y-3">
+              <p>⚠️ {authError}</p>
+              {isDeviceLocked && (
+                <div className="pt-2 border-t border-red-500/20 text-center">
+                  <button
+                    type="button"
+                    onClick={handleRequestTransfer}
+                    className="w-full py-2 bg-gradient-to-r from-amber-500 to-red-500 hover:from-amber-600 hover:to-red-600 text-slate-950 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer"
                   >
-                    <option value="Premier cycle">Premier cycle</option>
-                    <option value="Licence">Licence</option>
-                    <option value="Master">Master</option>
-                    <option value="Doctorat">Doctorat</option>
-                  </select>
+                    Demander l'autorisation d'un nouvel appareil mobile 📲
+                  </button>
+                  {transferStatusMsg && (
+                    <p className="mt-2 text-[10px] text-emerald-400 font-extrabold bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-lg animate-pulse">
+                      {transferStatusMsg}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {recoverySuccess && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-bold text-center mb-5">
+              ✅ {recoverySuccess}
+            </div>
+          )}
+
+          {authMode === 'register' && (
+            <>
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-xs text-gray-300 space-y-2 leading-relaxed">
+                <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
+                  ✨ Votre Port d'Inscription Académique
+                </p>
+                <p className="text-start">
+                  Inscrivez-vous instantanément pour bénéficier d'une <strong>période d'essai gratuite de 7 jours</strong>. Accédez à la génération automatique de quiz intelligents, à l'arène de compétition, et aux fiches récapitulatives d'élite.
+                </p>
+              </div>
+
+              <form onSubmit={handleRegisterSubmit} className="space-y-4 text-start">
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                    Nom complet
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex. Ibrahim Sawadogo"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                  />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                    Test & Simulation
+                    Adresse Email
                   </label>
-                  <select
-                    value={regSimTime}
-                    onChange={(e) => setRegSimTime(e.target.value as 'normal' | 'expired')}
-                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-amber-400 font-extrabold cursor-pointer"
-                  >
-                    <option value="normal">Essai actif (7j)</option>
-                    <option value="expired">Déjà expiré (démo)</option>
-                  </select>
+                  <input
+                    type="email"
+                    required
+                    placeholder="votre.nom@compte.com"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                  />
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
-              >
-                Créer mon compte & Débuter l'essai 🚀
-              </button>
-            </form>
-          ) : (
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                    Mot de passe sécurisé
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Minimum 6 caractères"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider text-ellipsis overflow-hidden">
+                      Niveau Académique
+                    </label>
+                    <select
+                      value={regLevel}
+                      onChange={(e) => setRegLevel(e.target.value as Level)}
+                      className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white cursor-pointer"
+                    >
+                      <option value="Premier cycle">Premier cycle</option>
+                      <option value="Licence">Licence</option>
+                      <option value="Master">Master</option>
+                      <option value="Doctorat">Doctorat</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                      Test & Simulation
+                    </label>
+                    <select
+                      value={regSimTime}
+                      onChange={(e) => setRegSimTime(e.target.value as 'normal' | 'expired')}
+                      className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-amber-400 font-extrabold cursor-pointer"
+                    >
+                      <option value="normal">Essai actif (7j)</option>
+                      <option value="expired">Déjà expiré (démo)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
+                >
+                  Créer mon compte & Débuter l'essai 🚀
+                </button>
+              </form>
+            </>
+          )}
+
+          {authMode === 'login' && (
             <form onSubmit={handleLoginSubmit} className="space-y-4 text-start">
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
@@ -2611,9 +2982,18 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Mot de passe
-                </label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider">
+                    Mot de passe
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode('forgot'); setAuthError(null); setRecoverySuccess(null); }}
+                    className="text-[11px] text-faso-blue hover:underline cursor-pointer font-bold focus:outline-none"
+                  >
+                    Mot de passe oublié ?
+                  </button>
+                </div>
                 <input
                   type="password"
                   required
@@ -2626,10 +3006,137 @@ export default function App() {
 
               <button
                 type="submit"
-                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
+                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-4 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider"
               >
                 Accéder à mon espace candidat 🔑
               </button>
+            </form>
+          )}
+
+          {authMode === 'forgot' && (
+            <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 text-start">
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-3 text-xs text-gray-300 space-y-2 leading-relaxed">
+                <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
+                  🔑 Réparation de l'accès au compte
+                </p>
+                <p className="text-start">
+                  Saisissez l'adresse e-mail de votre compte. Nous vous transmettrons un code secret OTP de 6 chiffres par e-mail afin de définir un nouveau mot de passe.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Adresse Email du compte
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="candidat.nom@compte.com"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isRecovering}
+                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                {isRecovering ? (
+                  <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                ) : null}
+                Obtenir mon code de vérification OTP ✉️
+              </button>
+
+              <div className="text-center mt-4">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(null); setRecoverySuccess(null); }}
+                  className="text-xs text-gray-400 hover:text-white cursor-pointer font-bold underline"
+                >
+                  Retourner à l'écran de connexion
+                </button>
+              </div>
+            </form>
+          )}
+
+          {authMode === 'reset' && (
+            <form onSubmit={handleResetPasswordSubmit} className="space-y-4 text-start">
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 mb-3 text-xs text-gray-300 leading-relaxed text-start">
+                Nous avons envoyé un message de récupération à <strong>{regEmail}</strong>. Saisissez le code secret OTP reçu et votre nouveau mot de passe ci-dessous.
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Code d'autorisation OTP (6 chiffres)
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  placeholder="Saisissez le code à 6 chiffres"
+                  value={recoveryOtp}
+                  onChange={(e) => setRecoveryOtp(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white text-center font-mono font-bold tracking-[0.4em] text-faso-blue"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Nouveau mot de passe sécurisé
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Minimum 6 caractères"
+                  value={recoveryNewPass}
+                  onChange={(e) => setRecoveryNewPass(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                  Confirmer le mot de passe
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Saisissez à nouveau le mot de passe"
+                  value={recoveryConfirmPass}
+                  onChange={(e) => setRecoveryConfirmPass(e.target.value)}
+                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isRecovering}
+                className="w-full py-4 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue font-bold rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-[1.01] mt-3 cursor-pointer text-xs text-slate-950 font-black uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                {isRecovering ? (
+                  <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                ) : null}
+                Enregistrer mon nouveau mot de passe 🔒
+              </button>
+
+              <div className="flex justify-between items-center text-xs mt-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('forgot'); setAuthError(null); setRecoverySuccess(null); }}
+                  className="text-faso-blue hover:underline cursor-pointer font-bold"
+                >
+                  Renvoyer le code OTP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(null); setRecoverySuccess(null); }}
+                  className="text-gray-400 hover:text-white cursor-pointer font-bold underline"
+                >
+                  Annuler & Connexion
+                </button>
+              </div>
             </form>
           )}
 
@@ -2667,7 +3174,11 @@ export default function App() {
 
   // Admin access state
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails' | 'banList'>('transactions');
+  const [adminModalTab, setAdminModalTab] = useState<'transactions' | 'emails' | 'banList' | 'users'>('transactions');
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [isLoadingAdminUsers, setIsLoadingAdminUsers] = useState(false);
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'premium' | 'pending' | 'trial' | 'expired'>('all');
   const [paymentAlertMessage, setPaymentAlertMessage] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -2850,6 +3361,68 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('faso_educ_manual_payments', JSON.stringify(manualPayments));
   }, [manualPayments]);
+
+  // Fetch complete registered candidates details & synchronization matrices
+  const fetchAdminUsers = async () => {
+    setIsLoadingAdminUsers(true);
+    try {
+      const token = localStorage.getItem('faso_educ_admin_token') || '';
+      const res = await fetch(getApiUrl('/api/admin/users'), {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.profiles && Array.isArray(data.profiles)) {
+          setAdminUsers(data.profiles);
+        }
+        if (data.payments && Array.isArray(data.payments)) {
+          setManualPayments(data.payments);
+        }
+        if (data.bannedEmails && Array.isArray(data.bannedEmails)) {
+          setBannedEmails(data.bannedEmails);
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load candidate profiles database for admin:", e);
+    } finally {
+      setIsLoadingAdminUsers(false);
+    }
+  };
+
+  const handleTogglePremiumManual = async (userEmail: string, currentPremiumState: boolean) => {
+    const nextState = !currentPremiumState;
+    // Optimistic Update
+    setAdminUsers(prev => prev.map(u => u.email.toLowerCase() === userEmail.toLowerCase() ? { ...u, isPremium: nextState } : u));
+    if (profile.email && profile.email.toLowerCase() === userEmail.toLowerCase()) {
+      setProfile(prev => ({ ...prev, isPremium: nextState }));
+    }
+    playSound(nextState ? 'correct' : 'wrong');
+
+    try {
+      const res = await fetch(getApiUrl('/api/admin/promote'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+        },
+        body: JSON.stringify({ email: userEmail, isPremium: nextState })
+      });
+      if (res.ok) {
+        // Automatically refetch users snapshot to make sure everything is in sync
+        fetchAdminUsers();
+      }
+    } catch (e) {
+      console.warn("Failed to synchronize manual candidate upgrade, using memory context:", e);
+    }
+  };
+
+  useEffect(() => {
+    if (showAdminModal && isAdminUnlocked) {
+      fetchAdminUsers();
+    }
+  }, [showAdminModal, adminModalTab, isAdminUnlocked]);
 
   const handleCheckoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -3922,6 +4495,38 @@ export default function App() {
         {/* TAB 1: PROFILE SUMMARY & USER DETAILS */}
         {espaceTab === 'profile' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+            {/* Admin Control Panel Card for Ibrahim Sawadogo */}
+            {profile?.email?.toLowerCase().trim() === 'ibrahimsawadogo36@gmail.com' && (
+              <div className="md:col-span-3 bg-gradient-to-r from-violet-600 via-indigo-950 to-violet-900 border border-violet-800 rounded-3xl p-6 text-white space-y-4 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 px-3 py-1 bg-violet-600 text-white font-mono uppercase text-[10px] tracking-widest rounded-bl font-black">
+                  ⚙️ ACCÈS SURVEILLANCE
+                </div>
+                <div className="space-y-1.5 text-left">
+                  <h3 className="text-lg font-black tracking-tight flex items-center gap-2">
+                    🛠️ Espace Privilégié d'Administration
+                  </h3>
+                  <p className="text-xs text-violet-200 leading-relaxed font-semibold max-w-3xl">
+                    Bonjour Ibrahim, vous êtes connecté avec votre compte administrateur (<strong className="text-faso-blue">ibrahimsawadogo36@gmail.com</strong>). Utilisez ce raccourci pour ouvrir le tableau général de validation des abonnements de Faso Educ.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3 pt-1">
+                  <button 
+                    onClick={() => {
+                      setShowAdminModal(true);
+                      playSound('correct');
+                    }}
+                    className="px-5 py-3 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-2 border border-slate-200"
+                  >
+                    <span>Ouvrir l'Espace Administration ⚙️</span>
+                    {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
+                      <span className="px-2.5 py-1 bg-red-600 text-white text-[10px] rounded-full font-black animate-pulse">
+                        {manualPayments.filter(tx => tx.status === 'pending').length} transaction(s) en attente
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Quick action card for subscription info */}
             <div className="md:col-span-2 bg-white dark:bg-slate-900 border border-gray-250 dark:border-slate-800 rounded-3xl p-5 space-y-4 shadow-xs">
               <h3 className="text-sm font-black uppercase text-gray-400 tracking-wider flex items-center gap-1.5 border-b dark:border-slate-800 pb-2">
@@ -5390,6 +5995,18 @@ export default function App() {
             >
               🚫 Bannissements ({bannedEmails.length})
             </button>
+            <button
+              onClick={() => {
+                setAdminModalTab('users');
+                playSound('correct');
+              }}
+              className={cn(
+                "px-3 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap",
+                adminModalTab === 'users' ? "border-violet-500 text-violet-400" : "border-transparent text-gray-400 hover:text-white"
+              )}
+            >
+              👥 Candidats & Abonnés ({adminUsers.length})
+            </button>
           </div>
 
           {/* Modal content body */}
@@ -5639,6 +6256,268 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {adminModalTab === 'users' && (
+              <div className="space-y-5">
+                {/* 1. Statistics Cards / Automated Dashboard */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] text-gray-400 font-extrabold uppercase tracking-widest block text-start">👤 Candidats Inscrits</span>
+                    <strong className="text-xl md:text-2xl font-black text-white block text-start">{adminUsers.length}</strong>
+                    <span className="text-[9px] text-emerald-400 font-bold block text-start">✓ Inscriptions totales</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] text-violet-400 font-extrabold uppercase tracking-widest block text-start">👑 Abonnés Payants</span>
+                    <strong className="text-xl md:text-2xl font-black text-violet-400 block text-start">
+                      {adminUsers.filter(u => u.isPremium).length}
+                    </strong>
+                    <span className="text-[9px] text-gray-400 font-medium block text-start">Privilèges actifs</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] text-amber-400 font-extrabold uppercase tracking-widest block text-start">⏳ Inscription en cours</span>
+                    <strong className="text-xl md:text-2xl font-black text-amber-400 block text-start">
+                      {adminUsers.filter(u => !u.isPremium && manualPayments.some(tx => tx.userEmail.toLowerCase().trim() === u.email.toLowerCase().trim() && tx.status === 'pending')).length}
+                    </strong>
+                    <span className="text-[9px] text-gray-400 font-medium block text-start">Fonds non validés</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-widest block text-start">💰 Somme Globale</span>
+                    <strong className="text-xl md:text-2xl font-black text-emerald-400 block text-start">
+                      {manualPayments.filter(tx => tx.status === 'approved').reduce((sum, tx) => sum + (tx.amount || 0), 0).toLocaleString()} <span className="text-xs">FCFA</span>
+                    </strong>
+                    <span className="text-[9px] text-gray-400 font-medium block text-start">CA total validé</span>
+                  </div>
+                </div>
+
+                {/* 2. Search & Smart Filters Controls */}
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1 relative">
+                    <input 
+                      type="text"
+                      placeholder="Rechercher par nom, e-mail ou niveau scolaire..."
+                      value={adminSearchQuery}
+                      onChange={(e) => setAdminSearchQuery(e.target.value)}
+                      className="w-full p-3.5 pl-10 bg-slate-950 text-white border border-slate-800 focus:border-violet-500 text-xs rounded-xl outline-none"
+                    />
+                    <span className="absolute left-3.5 top-3.5 text-gray-400 text-sm">🔍</span>
+                    {adminSearchQuery && (
+                      <button 
+                        onClick={() => setAdminSearchQuery('')} 
+                        className="absolute right-3.5 top-3.5 text-xs text-gray-400 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-1 overflow-x-auto pb-1 shrink-0 no-scrollbar">
+                    {(['all', 'premium', 'pending', 'trial', 'expired'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => {
+                          setAdminUserFilter(f);
+                          playSound('correct');
+                        }}
+                        className={cn(
+                          "px-3 py-2 text-[10px] font-black uppercase rounded-lg border cursor-pointer transition-all whitespace-nowrap",
+                          adminUserFilter === f 
+                            ? "bg-violet-600 border-violet-500 text-white" 
+                            : "bg-slate-950 border-slate-800 text-gray-400 hover:text-white hover:border-slate-700"
+                        )}
+                      >
+                        {f === 'all' && "Tous"}
+                        {f === 'premium' && "👑 Abonnés Actifs"}
+                        {f === 'pending' && "⏳ En Cours"}
+                        {f === 'trial' && "🆓 Essais Actifs"}
+                        {f === 'expired' && "🔴 Essais Expirés"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Candidates Database Matrix */}
+                <div className="space-y-3">
+                  {isLoadingAdminUsers ? (
+                    <div className="py-12 text-center flex flex-col items-center justify-center gap-2">
+                      <span className="w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                      <p className="text-xs text-gray-400">Chargement sécurisé du répertoire...</p>
+                    </div>
+                  ) : (() => {
+                    // Filter the listing logic
+                    const filtered = adminUsers.filter(u => {
+                      // Match Search Query
+                      const mEmail = (u.email || '').toLowerCase();
+                      const mName = (u.name || '').toLowerCase();
+                      const mLevel = (u.level || '').toLowerCase();
+                      const mQuery = adminSearchQuery.trim().toLowerCase();
+                      
+                      const matchesSearch = !mQuery || mEmail.includes(mQuery) || mName.includes(mQuery) || mLevel.includes(mQuery);
+                      if (!matchesSearch) return false;
+
+                      // Match Tab filter
+                      const uEmailClean = (u.email || '').toLowerCase().trim();
+                      const hasPending = manualPayments.some(tx => tx.userEmail.toLowerCase().trim() === uEmailClean && tx.status === 'pending');
+                      const premiumState = !!u.isPremium;
+                      
+                      const regDate = u.registrationDate ? new Date(u.registrationDate) : new Date();
+                      const elapsedMs = new Date().getTime() - regDate.getTime();
+                      const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+                      const isExpired = !premiumState && elapsedDays >= 7;
+
+                      if (adminUserFilter === 'premium') return premiumState;
+                      if (adminUserFilter === 'pending') return !premiumState && hasPending;
+                      if (adminUserFilter === 'trial') return !premiumState && !isExpired && !hasPending;
+                      if (adminUserFilter === 'expired') return !premiumState && isExpired;
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-12 text-center border border-dashed border-slate-800 rounded-2xl">
+                          <p className="text-xs text-gray-400 font-medium font-sans">Aucun candidat correspondant aux critères de filtrage actuel.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+                        {filtered.map(u => {
+                          const uEmailClean = (u.email || '').toLowerCase().trim();
+                          const hasPending = manualPayments.some(tx => tx.userEmail.toLowerCase().trim() === uEmailClean && tx.status === 'pending');
+                          const associatedPendingTx = manualPayments.find(tx => tx.userEmail.toLowerCase().trim() === uEmailClean && tx.status === 'pending');
+                          
+                          // Summing totals of manual payments approved
+                          const totalPaid = manualPayments
+                            .filter(tx => tx.userEmail.toLowerCase().trim() === uEmailClean && tx.status === 'approved')
+                            .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+                          // Free trial remaining calculations
+                          const regDateStr = u.registrationDate;
+                          let trialLabel = "7 jours restants 🟢";
+                          let isExpiredLocal = false;
+                          if (regDateStr) {
+                            const regDate = new Date(regDateStr);
+                            if (!isNaN(regDate.getTime())) {
+                              const elapsedMs = new Date().getTime() - regDate.getTime();
+                              const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+                              const remaining = 7 - elapsedDays;
+                              const daysRem = Math.max(0, Math.ceil(remaining));
+                              isExpiredLocal = daysRem <= 0;
+                              trialLabel = isExpiredLocal ? "Expiré 🔴" : `${daysRem} jour${daysRem > 1 ? 's' : ''} restant${daysRem > 1 ? 's' : ''} 🟢`;
+                            }
+                          }
+
+                          const isBannedLocal = bannedEmails.includes(uEmailClean);
+
+                          return (
+                            <div 
+                              key={uEmailClean} 
+                              className={cn(
+                                "p-4 rounded-xl border transition-all text-xs font-sans relative flex flex-col md:flex-row md:items-center justify-between gap-4 text-left",
+                                u.isPremium ? "border-violet-500/20 bg-violet-500/[0.02]" :
+                                hasPending ? "border-amber-500/20 bg-amber-500/[0.02]" : "border-slate-800 bg-slate-950/40"
+                              )}
+                            >
+                              {/* Left details side */}
+                              <div className="flex items-start gap-4">
+                                <span className="text-2xl pt-1 select-none">{u.avatar || "👨‍🎓"}</span>
+                                <div className="space-y-1.5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <strong className="text-white text-sm font-black">{u.name}</strong>
+                                    {isBannedLocal && (
+                                      <span className="bg-red-500/15 text-red-400 border border-red-500/20 text-[8px] font-mono px-1.5 py-0.5 rounded uppercase font-black">Banni</span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-gray-400 font-mono tracking-tight">{u.email}</p>
+                                  <p className="text-[10px] text-sky-205 font-semibold">{u.level} • <span className="text-gray-400">{u.regionName || "Centre (Ouagadougou)"}</span></p>
+                                  
+                                  {/* Subscription metrics summary */}
+                                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                    {u.isPremium ? (
+                                      <span className="text-[9px] font-black uppercase text-violet-400 bg-violet-400/10 px-2 py-0.5 rounded border border-violet-500/20">
+                                        👑 Abonné Premium
+                                      </span>
+                                    ) : hasPending ? (
+                                      <span className="text-[9px] font-black uppercase text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 text-amber-400 animate-pulse">
+                                        ⏳ En cours de validation
+                                      </span>
+                                    ) : isExpiredLocal ? (
+                                      <span className="text-[9px] font-black uppercase text-red-400 bg-red-400/10 px-2 py-0.5 rounded border border-red-500/10">
+                                        🔴 Essai Expiré
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-black uppercase text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-500/10 font-bold">
+                                        🆓 Période d'essai active
+                                      </span>
+                                    )}
+
+                                    {/* Trial Status detailed info */}
+                                    {!u.isPremium && (
+                                      <span className="text-[10px] text-gray-400 font-medium font-mono">
+                                        ({trialLabel})
+                                      </span>
+                                    )}
+
+                                    {/* Cash amount collected badge */}
+                                    {totalPaid > 0 && (
+                                      <span className="text-[10px] text-emerald-300 bg-emerald-500/15 border border-emerald-500/15 font-black px-2 py-0.5 rounded">
+                                        Somme payée : {totalPaid.toLocaleString()} FCFA
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {associatedPendingTx && (
+                                    <div className="mt-2.5 p-2 bg-amber-500/5 border border-amber-500/15 rounded-lg text-[10px] text-amber-300">
+                                      ⚠️ Réf déclaré : <strong className="font-mono text-white">{associatedPendingTx.reference}</strong> ({associatedPendingTx.amount} FCFA sur {associatedPendingTx.operator.toUpperCase()})
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Right context actions */}
+                              <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                                {/* Direct quick promotion / privilege grant toggle button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleTogglePremiumManual(u.email, !!u.isPremium)}
+                                  className={cn(
+                                    "px-3 py-1.5 font-black uppercase text-[9px] tracking-wider rounded-lg border transition-all cursor-pointer",
+                                    u.isPremium 
+                                      ? "bg-violet-950 text-violet-400 border-violet-850 hover:bg-violet-900" 
+                                      : "bg-white hover:bg-slate-100 text-slate-950 border-white hover:scale-[1.01]"
+                                  )}
+                                >
+                                  {u.isPremium ? "✕ Retirer Forfait" : "⚡ Activer Premium"}
+                                </button>
+
+                                {/* Direct safety block option */}
+                                {!isBannedLocal ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBanAction(u.email)}
+                                    className="p-1.5 bg-slate-950 text-red-400 hover:bg-red-500/10 border border-slate-800 hover:border-red-500/20 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
+                                    title="Exclure temporairement"
+                                  >
+                                    🚫 Bannir
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnbanAction(u.email)}
+                                    className="p-1.5 bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-500/30 text-faso-green rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
+                                  >
+                                    🔓 Gracier
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
@@ -5775,19 +6654,21 @@ export default function App() {
               Essai
             </button>
           )}
-          <button 
-            onClick={() => {
-              setShowAdminModal(true);
-              playSound('correct');
-            }}
-            className="px-3 py-2.5 bg-violet-500/10 hover:bg-violet-500/25 text-violet-500 dark:text-violet-400 font-extrabold text-[10px] uppercase rounded-xl transition-all border border-violet-500/20 cursor-pointer flex items-center gap-1.5"
-            title="Espace de validation d'abonnements"
-          >
-            <span>🛠️ Admin</span>
-            {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
-              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
-            )}
-          </button>
+          {profile?.email?.toLowerCase().trim() === 'ibrahimsawadogo36@gmail.com' && (
+            <button 
+              onClick={() => {
+                setShowAdminModal(true);
+                playSound('correct');
+              }}
+              className="px-3 py-2.5 bg-violet-500/10 hover:bg-violet-500/25 text-violet-500 dark:text-violet-400 font-extrabold text-[10px] uppercase rounded-xl transition-all border border-violet-500/20 cursor-pointer flex items-center gap-1.5"
+              title="Espace de validation d'abonnements"
+            >
+              <span>🛠️ Admin</span>
+              {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
+                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
+              )}
+            </button>
+          )}
           <button 
             onClick={() => setShowSettings(true)}
             className="p-3 bg-gray-100/50 dark:bg-gray-900/50 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-xl transition-all border border-gray-200/20 cursor-pointer"
@@ -5811,9 +6692,17 @@ export default function App() {
         {activeTab === 'Espace' && renderEspace()}
         {activeTab === 'Competition' && (
           <CompetitionArena 
-            onBack={() => setActiveTab('Accueil')}
+            onBack={() => {
+              setActiveTab('Accueil');
+              setInitialSharedRoomNumber(null);
+              setInitialSharedInviteId(null);
+            }}
             onSaveToHistory={(res) => setHistory(prev => [res, ...prev])}
             soundEnabled={settings.soundEnabled}
+            profile={profile}
+            initialSharedRoomNumber={initialSharedRoomNumber}
+            initialSharedInviteId={initialSharedInviteId}
+            onlineUsers={onlineUsers}
           />
         )}
         {(activeTab === 'Entraînement' || activeTab === 'Test' || activeTab === 'Concours') && renderQuiz()}
@@ -5915,6 +6804,84 @@ export default function App() {
             <span className="text-[9px] font-bold uppercase mt-1">Bibliothèque</span>
           </button>
         </nav>
+      )}
+
+      {/* Real-time incoming duel challenge popup modal */}
+      {activeInviteDialog && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white dark:bg-gray-900 border-2 border-faso-blue dark:border-faso-blue/50 rounded-3xl p-6 max-w-md w-full shadow-2xl text-center space-y-6"
+          >
+            <div className="inline-flex p-3 bg-red-500/10 text-red-500 rounded-full animate-bounce">
+              <ShieldAlert size={36} />
+            </div>
+
+            <div className="space-y-2">
+              <span className="px-3 py-1 bg-faso-blue/15 text-faso-blue rounded-full text-[10px] font-black uppercase tracking-wider">
+                DÉFI EN DIRECT PROPA-GUÉ ⚡
+              </span>
+              <h3 className="text-xl font-black text-gray-900 dark:text-white leading-tight">
+                {activeInviteDialog.hostName} vous défie !
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Êtes-vous assez vigoureux pour l'affronter en ligne ? L'épreuve porte sur : <br />
+                <strong className="text-faso-blue dark:text-blue-400 font-extrabold text-sm">{activeInviteDialog.subject}</strong> <br />
+                <span className="text-xs font-semibold text-gray-500 dark:text-gray-500">
+                  (Niveau {activeInviteDialog.level} • {activeInviteDialog.questionCount} Questions de {activeInviteDialog.timeLimit}s)
+                </span>
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(getApiUrl('/api/competition/reject'), {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ invitationId: activeInviteDialog.id })
+                    });
+                    if (res.ok) {
+                      setActiveInviteDialog(null);
+                    }
+                  } catch (e) {
+                    setActiveInviteDialog(null);
+                  }
+                }}
+                className="flex-1 py-3 border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-850 text-gray-600 dark:text-gray-400 font-extrabold rounded-xl transition-all cursor-pointer text-xs uppercase"
+              >
+                Décliner ✕
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(getApiUrl('/api/competition/accept'), {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ 
+                        invitationId: activeInviteDialog.id,
+                        inviteeName: profile.name || "Candidat Adonné"
+                      })
+                    });
+                    if (res.ok) {
+                      setInitialSharedRoomNumber(activeInviteDialog.roomNumber);
+                      setInitialSharedInviteId(activeInviteDialog.id);
+                      setActiveTab('Competition');
+                      setActiveInviteDialog(null);
+                    }
+                  } catch (e) {
+                    setActiveInviteDialog(null);
+                  }
+                }}
+                className="flex-1 py-3 bg-gradient-to-r from-faso-blue to-faso-green hover:from-blue-600 hover:to-green-600 text-white font-black rounded-xl shadow-md transition-all cursor-pointer text-xs uppercase"
+              >
+                RELEVER LE DÉFI ! 🔥
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
 
       {/* Checkout selection modal */}

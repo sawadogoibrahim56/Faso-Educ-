@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import fs from "fs";
 
 dotenv.config();
 
@@ -50,6 +51,45 @@ let serverBannedEmails: string[] = ["fraud_spammer@test.bf"];
 let serverProfiles: Record<string, any> = {};
 let serverCourses: any[] = [];
 let serverQuizResults: any[] = [];
+
+const LOCAL_DB_PATH = path.join(process.cwd(), "local_db.json");
+
+function loadLocalDB() {
+  try {
+    if (fs.existsSync(LOCAL_DB_PATH)) {
+      const data = fs.readFileSync(LOCAL_DB_PATH, "utf8");
+      const db = JSON.parse(data);
+      if (db.profiles) serverProfiles = db.profiles;
+      if (db.payments) serverManualPayments = db.payments;
+      if (db.banned) serverBannedEmails = db.banned;
+      if (db.courses) serverCourses = db.courses;
+      if (db.results) serverQuizResults = db.results;
+      console.info("💾 [Local DB] Loaded successfully with", Object.keys(serverProfiles).length, "profiles!");
+    } else {
+      saveLocalDB();
+    }
+  } catch (err: any) {
+    console.error("⚠️ Failed to load local database:", err.message);
+  }
+}
+
+function saveLocalDB() {
+  try {
+    const db = {
+      profiles: serverProfiles,
+      payments: serverManualPayments,
+      banned: serverBannedEmails,
+      courses: serverCourses,
+      results: serverQuizResults
+    };
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(db, null, 2), "utf8");
+  } catch (err: any) {
+    console.error("⚠️ Failed to save local database:", err.message);
+  }
+}
+
+// Ensure the local database is loaded immediately
+loadLocalDB();
 
 // Helper methods for JWT Session Signatures (JWS)
 function generateToken(payload: any): string {
@@ -408,20 +448,16 @@ app.post("/api/gemini/forum", async (req, res) => {
   }
 });
 
-// 1. Dynamic Supabase Configuration Endpoint
-app.get("/api/supabase-config", (req, res) => {
-  res.json({
-    supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
-  });
-});
-
-// 2. Profile Fetch / Sync Endpoints
+// 1. Dynamic Supabase// 2. Profile Fetch / Sync Endpoints
 app.get("/api/profiles/:email", async (req, res) => {
   const email = req.params.email ? req.params.email.trim().toLowerCase() : "";
+  const deviceId = req.query.deviceId ? (req.query.deviceId as string).trim() : "";
+
   if (!email) {
     return res.status(400).json({ error: "Missing email parameter" });
   }
+
+  let prof: any = null;
 
   if (supabaseAdmin) {
     try {
@@ -433,7 +469,7 @@ app.get("/api/profiles/:email", async (req, res) => {
 
       if (error) throw error;
       if (data) {
-        const prof = {
+        prof = {
           email: data.email,
           name: data.name,
           level: data.level,
@@ -446,26 +482,64 @@ app.get("/api/profiles/:email", async (req, res) => {
           password: data.password || "123456",
           registered: true
         };
-        const token = generateToken({ email: prof.email });
-        return res.json({ ...prof, token });
       }
     } catch (err: any) {
       console.error("Supabase profile get error, falling back:", err.message);
     }
   }
 
-  // Fallback to memory
-  if (serverProfiles[email]) {
-    const token = generateToken({ email });
-    return res.json({ ...serverProfiles[email], token });
+  // Fallback or merge with memory
+  if (!prof && serverProfiles[email]) {
+    prof = { ...serverProfiles[email] };
+  } else if (prof && serverProfiles[email]) {
+    prof = { ...prof, ...serverProfiles[email] };
+  }
+
+  if (prof) {
+    // If deviceId is provided by client (e.g. during login or status check)
+    if (deviceId) {
+      const activeBoundId = serverProfiles[email]?.boundDeviceId || prof.boundDeviceId || null;
+      if (activeBoundId && activeBoundId !== deviceId) {
+        return res.status(403).json({
+          error: "device_locked",
+          message: "Ce compte est lié à un autre appareil. Pour des raisons de sécurité, vous ne pouvez pas vous connecter sur deux téléphones différents simultanément.",
+          transferRequested: !!serverProfiles[email]?.transferRequested || !!prof.transferRequested
+        });
+      }
+
+      // Automatically bind if not bound yet
+      if (!activeBoundId) {
+        prof.boundDeviceId = deviceId;
+        if (!serverProfiles[email]) {
+          serverProfiles[email] = { ...prof };
+        }
+        serverProfiles[email].boundDeviceId = deviceId;
+        saveLocalDB();
+      }
+    }
+
+    const token = generateToken({ email: prof.email });
+    return res.json({ ...prof, token });
   }
 
   return res.json({ registered: false, email });
 });
 
+app.post("/api/profiles/request-transfer", (req, res) => {
+  const email = req.body.email ? req.body.email.trim().toLowerCase() : "";
+  if (!email || !serverProfiles[email]) {
+    return res.status(404).json({ error: "Compte non trouvé." });
+  }
+  serverProfiles[email].transferRequested = true;
+  saveLocalDB();
+  res.json({ success: true, message: "Demande de déverrouillage de l'appareil envoyée avec succès à l'administration !" });
+});
+
 app.post("/api/profiles/sync", async (req, res) => {
   const profile = req.body;
   const email = profile.email ? profile.email.trim().toLowerCase() : "";
+  const clientDeviceId = profile.deviceId || profile.boundDeviceId || "";
+
   if (!email) {
     return res.status(400).json({ error: "Missing email in profile" });
   }
@@ -518,8 +592,18 @@ app.post("/api/profiles/sync", async (req, res) => {
     }
   }
 
+  // Preserve existing device lock if any
+  const existingBound = serverProfiles[email]?.boundDeviceId || null;
+  const finalBound = existingBound ? existingBound : (clientDeviceId || null);
+
   // Sync to memory
-  serverProfiles[email] = { ...profile, registered: true };
+  serverProfiles[email] = {
+    ...serverProfiles[email],
+    ...profile,
+    boundDeviceId: finalBound,
+    registered: true
+  };
+  saveLocalDB();
   const token = generateToken({ email });
   res.json({ success: true, profile: serverProfiles[email], token });
 });
@@ -600,6 +684,7 @@ app.post("/api/payments", async (req, res) => {
   }
 
   serverManualPayments = [newTx, ...serverManualPayments];
+  saveLocalDB();
   
   // Trigger non-blocking asynchronous email notification dispatch to administrator
   sendAdminPaymentMail(newTx).catch(e => console.error("Error dispatching admin email:", e));
@@ -826,6 +911,7 @@ app.post("/api/payments/auto-pay", async (req, res) => {
     }
 
     serverManualPayments = [newTx, ...serverManualPayments];
+    saveLocalDB();
 
     return res.json({
       success: true,
@@ -892,6 +978,282 @@ app.post("/api/payments/status", async (req, res) => {
   }
 
   res.json({ success: true, id, status });
+  saveLocalDB();
+});
+
+// ==========================================
+// REAL-TIME SYNCHRONIZED COMPETITION MOTORS
+// ==========================================
+
+interface OnlineUser {
+  email: string;
+  name: string;
+  level: string;
+  avatar: string;
+  isPremium: boolean;
+  lastPing: number;
+}
+
+interface Invitation {
+  id: string;
+  hostEmail: string;
+  hostName: string;
+  inviteeEmail: string;
+  roomNumber: number;
+  subject: string;
+  level: string;
+  questionCount: number;
+  timeLimit: number;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+interface RoomAnswers {
+  [email: string]: {
+    [questionIdx: number]: {
+      optionIdx: number;
+      isCorrect: boolean;
+      timeTaken: number;
+      scoreAdded: number;
+    }
+  }
+}
+
+interface RoomState {
+  roomNumber: number;
+  hostEmail: string;
+  hostName: string;
+  inviteeEmail: string;
+  inviteeName: string;
+  questions: any[];
+  status: 'lobby' | 'active' | 'podium';
+  currentQuestionIndex: number;
+  answers: RoomAnswers;
+  lastUpdated: number;
+}
+
+let activeOnlineUsers: Record<string, OnlineUser> = {};
+let activeInvitations: Record<string, Invitation> = {};
+let activeRoomStates: Record<number, RoomState> = {};
+
+// Automated cleaner for old/stale references
+setInterval(() => {
+  const now = Date.now();
+  Object.keys(activeOnlineUsers).forEach(email => {
+    if (now - activeOnlineUsers[email].lastPing > 12000) {
+      delete activeOnlineUsers[email];
+    }
+  });
+  Object.keys(activeRoomStates).forEach(roomCode => {
+    const num = Number(roomCode);
+    if (!isNaN(num) && now - activeRoomStates[num].lastUpdated > 3600000) {
+      delete activeRoomStates[num];
+    }
+  });
+}, 10000);
+
+app.post("/api/competition/presence", (req, res) => {
+  const { email, name, level, avatar, isPremium } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: "E-mail requis pour enregistrer la présence." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  activeOnlineUsers[cleanEmail] = {
+    email: cleanEmail,
+    name: name || email.split("@")[0],
+    level: level || "Licence",
+    avatar: avatar || "👨‍🎓",
+    isPremium: !!isPremium,
+    lastPing: Date.now()
+  };
+
+  const now = Date.now();
+  const onlineList = Object.values(activeOnlineUsers)
+    .filter(u => u.email !== cleanEmail && (now - u.lastPing <= 12000));
+
+  const pendingInvites = Object.values(activeInvitations)
+    .filter(inv => inv.inviteeEmail === cleanEmail && inv.status === 'pending');
+
+  res.json({
+    success: true,
+    onlineUsers: onlineList,
+    pendingInvitations: pendingInvites
+  });
+});
+
+app.post("/api/competition/invite", (req, res) => {
+  const { hostEmail, hostName, inviteeEmail, roomNumber, subject, level, questionCount, timeLimit } = req.body;
+  if (!hostEmail || !inviteeEmail || !roomNumber) {
+    return res.status(400).json({ error: "Champs obligatoires manquants." });
+  }
+
+  const cleanHost = hostEmail.trim().toLowerCase();
+  const cleanInvitee = inviteeEmail.trim().toLowerCase();
+  const inviteId = `inv-${cleanHost}-to-${cleanInvitee}-${Date.now()}`;
+
+  // Reset ancient pending invites to preserve logic
+  Object.keys(activeInvitations).forEach(id => {
+    const inv = activeInvitations[id];
+    if (inv.hostEmail === cleanHost && inv.inviteeEmail === cleanInvitee && inv.status === 'pending') {
+      inv.status = 'rejected';
+    }
+  });
+
+  const newInvite: Invitation = {
+    id: inviteId,
+    hostEmail: cleanHost,
+    hostName: hostName || cleanHost.split("@")[0],
+    inviteeEmail: cleanInvitee,
+    roomNumber: Number(roomNumber),
+    subject: subject || "Microéconomie",
+    level: level || "Licence",
+    questionCount: Number(questionCount) || 8,
+    timeLimit: Number(timeLimit) || 45,
+    status: 'pending'
+  };
+
+  activeInvitations[inviteId] = newInvite;
+
+  activeRoomStates[Number(roomNumber)] = {
+    roomNumber: Number(roomNumber),
+    hostEmail: cleanHost,
+    hostName: hostName || cleanHost.split("@")[0],
+    inviteeEmail: cleanInvitee,
+    inviteeName: cleanInvitee.split("@")[0],
+    questions: [],
+    status: 'lobby',
+    currentQuestionIndex: 0,
+    answers: {
+      [cleanHost]: {},
+      [cleanInvitee]: {}
+    },
+    lastUpdated: Date.now()
+  };
+
+  res.json({
+    success: true,
+    invitationId: inviteId,
+    roomNumber
+  });
+});
+
+app.post("/api/competition/accept", (req, res) => {
+  const { invitationId, inviteeName } = req.body;
+  if (!invitationId) {
+    return res.status(400).json({ error: "ID d'invitation manquant." });
+  }
+
+  const invite = activeInvitations[invitationId];
+  if (!invite) {
+    return res.status(404).json({ error: "L'invitation a expiré." });
+  }
+
+  invite.status = 'accepted';
+
+  const room = activeRoomStates[invite.roomNumber];
+  if (room) {
+    room.inviteeName = inviteeName || invite.inviteeEmail.split("@")[0];
+    room.lastUpdated = Date.now();
+  }
+
+  res.json({ success: true, roomNumber: invite.roomNumber });
+});
+
+app.post("/api/competition/reject", (req, res) => {
+  const { invitationId } = req.body;
+  if (!invitationId) {
+    return res.status(400).json({ error: "ID d'invitation manquant." });
+  }
+
+  const invite = activeInvitations[invitationId];
+  if (invite) {
+    invite.status = 'rejected';
+  }
+
+  res.json({ success: true });
+});
+
+app.get("/api/competition/room/status/:roomNumber", (req, res) => {
+  const roomNum = Number(req.params.roomNumber);
+  const room = activeRoomStates[roomNum];
+  if (!room) {
+    return res.status(404).json({ error: "Chambre introuvable." });
+  }
+
+  const invitation = Object.values(activeInvitations)
+    .find(inv => inv.roomNumber === roomNum);
+
+  const now = Date.now();
+  const hostOnline = !!activeOnlineUsers[room.hostEmail] && (now - activeOnlineUsers[room.hostEmail].lastPing <= 15000);
+  const inviteeOnline = !!activeOnlineUsers[room.inviteeEmail] && (now - activeOnlineUsers[room.inviteeEmail].lastPing <= 15000);
+
+  res.json({
+    success: true,
+    roomState: room,
+    invitation,
+    hostOnline,
+    inviteeOnline
+  });
+});
+
+app.post("/api/competition/room/start", (req, res) => {
+  const { roomNumber, questions } = req.body;
+  const room = activeRoomStates[Number(roomNumber)];
+  if (!room) {
+    return res.status(404).json({ error: "Salon introuvable." });
+  }
+
+  room.questions = questions;
+  room.status = 'active';
+  room.currentQuestionIndex = 0;
+  room.answers = {
+    [room.hostEmail]: {},
+    [room.inviteeEmail]: {}
+  };
+  room.lastUpdated = Date.now();
+
+  res.json({ success: true, roomState: room });
+});
+
+app.post("/api/competition/room/answer", (req, res) => {
+  const { roomNumber, email, questionIndex, optionIdx, isCorrect, timeTaken, scoreAdded } = req.body;
+  const room = activeRoomStates[Number(roomNumber)];
+  if (!room) {
+    return res.status(404).json({ error: "Salon introuvable." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  if (!room.answers[cleanEmail]) {
+    room.answers[cleanEmail] = {};
+  }
+
+  room.answers[cleanEmail][Number(questionIndex)] = {
+    optionIdx: Number(optionIdx),
+    isCorrect: !!isCorrect,
+    timeTaken: Number(timeTaken),
+    scoreAdded: Number(scoreAdded) || 0
+  };
+  room.lastUpdated = Date.now();
+
+  res.json({ success: true, answersSnapshot: room.answers });
+});
+
+app.post("/api/competition/room/next", (req, res) => {
+  const { roomNumber, nextIndex } = req.body;
+  const room = activeRoomStates[Number(roomNumber)];
+  if (!room) {
+    return res.status(404).json({ error: "Salon introuvable." });
+  }
+
+  if (typeof nextIndex === 'number') {
+    room.currentQuestionIndex = nextIndex;
+    if (room.questions.length > 0 && nextIndex >= room.questions.length) {
+      room.status = 'podium';
+    }
+  }
+  room.lastUpdated = Date.now();
+
+  res.json({ success: true, roomState: room });
 });
 
 // 4. Banning Management
@@ -942,6 +1304,7 @@ app.post("/api/users/ban", async (req, res) => {
   }
 
   res.json({ success: true, email: cleanEmail });
+  saveLocalDB();
 });
 
 app.post("/api/users/unban", async (req, res) => {
@@ -969,6 +1332,163 @@ app.post("/api/users/unban", async (req, res) => {
   }
 
   res.json({ success: true, email: cleanEmail });
+  saveLocalDB();
+});
+
+// Admin Route to retrieve all logged-in/registered candidates and subscription matrices
+app.get("/api/admin/users", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: "Accès refusé. Autorisation administrateur requise." });
+  }
+
+  let profilesList: Record<string, any> = {};
+
+  // Seed with memory cached records first
+  Object.keys(serverProfiles).forEach(email => {
+    const p = serverProfiles[email];
+    profilesList[email.toLowerCase()] = {
+      email: p.email || email,
+      name: p.name || email.split("@")[0],
+      level: p.level || "Licence",
+      targetExam: p.targetExam || p.target_exam || "Non spécifié",
+      regionName: p.regionName || p.region_name || "Centre (Ouagadougou)",
+      avatar: p.avatar || "👨‍🎓",
+      isPremium: !!p.isPremium || !!p.is_premium,
+      points: p.points || 0,
+      learningStreak: p.learningStreak || p.learning_streak || 0,
+      password: p.password || "123456",
+      registered: true,
+      boundDeviceId: p.boundDeviceId || null,
+      transferRequested: !!p.transferRequested || false,
+      registrationDate: p.registrationDate || p.created_at || new Date().toISOString()
+    };
+  });
+
+  // Pull from Supabase if connected
+  if (supabaseAdmin) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("*");
+      if (!error && data) {
+        data.forEach((row: any) => {
+          const email = row.email.toLowerCase();
+          profilesList[email] = {
+            email: row.email,
+            name: row.name || email.split("@")[0],
+            level: row.level || "Licence",
+            targetExam: row.target_exam || "Non spécifié",
+            regionName: row.region_name || "Centre (Ouagadougou)",
+            avatar: row.avatar || "👨‍🎓",
+            isPremium: !!row.is_premium,
+            points: row.points || 0,
+            learningStreak: row.learning_streak || 0,
+            password: row.password || "123456",
+            registered: true,
+            boundDeviceId: row.bound_device_id || row.boundDeviceId || null,
+            transferRequested: !!row.transfer_requested || false,
+            registrationDate: row.created_at || row.registrationDate || new Date().toISOString()
+          };
+        });
+      }
+    } catch (dbErr: any) {
+      console.error("Failed to query full profiles from Supabase for admin:", dbErr.message);
+    }
+  }
+
+  // Inject memory bound devices state on top of Supabase results
+  Object.keys(serverProfiles).forEach(email => {
+    const cleanEmail = email.toLowerCase();
+    if (profilesList[cleanEmail]) {
+      if (serverProfiles[email].boundDeviceId) {
+        profilesList[cleanEmail].boundDeviceId = serverProfiles[email].boundDeviceId;
+      }
+      if (serverProfiles[email].transferRequested) {
+        profilesList[cleanEmail].transferRequested = serverProfiles[email].transferRequested;
+      }
+    }
+  });
+
+  res.json({
+    success: true,
+    profiles: Object.values(profilesList),
+    payments: serverManualPayments,
+    bannedEmails: serverBannedEmails
+  });
+});
+
+app.post("/api/admin/reset-device", (req, res) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: "Accès refusé. Autorisation administrateur requise." });
+  }
+  const { email } = req.body;
+  const cleanEmail = email ? email.trim().toLowerCase() : "";
+  if (serverProfiles[cleanEmail]) {
+    serverProfiles[cleanEmail].boundDeviceId = null;
+    serverProfiles[cleanEmail].transferRequested = false;
+    saveLocalDB();
+    return res.json({ success: true, message: "Liaison de l'appareil mobile réinitialisée avec succès ! Nouveau téléphone autorisé." });
+  }
+  res.status(404).json({ error: "Candidat non trouvé." });
+});
+
+app.post("/api/admin/decline-transfer", (req, res) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: "Accès refusé." });
+  }
+  const { email } = req.body;
+  const cleanEmail = email ? email.trim().toLowerCase() : "";
+  if (serverProfiles[cleanEmail]) {
+    serverProfiles[cleanEmail].transferRequested = false;
+    saveLocalDB();
+    return res.json({ success: true, message: "Demande de transfert d'appareil déclinée avec succès !" });
+  }
+  res.status(404).json({ error: "Candidat non trouvé." });
+});
+
+// Admin Route to manually manage Premium privileges of any candidate profile
+app.post("/api/admin/promote", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: "Accès refusé. Autorisation administrateur requise." });
+  }
+
+  const { email, isPremium } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: "Adresse email requise." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Set memory cache status
+  if (serverProfiles[cleanEmail]) {
+    serverProfiles[cleanEmail].isPremium = !!isPremium;
+  } else {
+    // If they aren't fully registered in memory cache but we are promoting, create placeholder
+    serverProfiles[cleanEmail] = {
+      email: cleanEmail,
+      name: cleanEmail.split("@")[0],
+      isPremium: !!isPremium,
+      registered: true,
+      registrationDate: new Date().toISOString()
+    };
+  }
+
+  // Set database status if live Supabase is active
+  if (supabaseAdmin) {
+    try {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .update({ is_premium: !!isPremium })
+        .eq("email", cleanEmail);
+
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Supabase user manual promotion update failed:", err.message);
+    }
+  }
+
+  res.json({ success: true, email: cleanEmail, isPremium: !!isPremium });
+  saveLocalDB();
 });
 
 // A. Token validation endpoint for connection durability
@@ -1074,6 +1594,194 @@ app.post("/api/admin/login", (req, res) => {
   return res.status(401).json({ error: "Identifiant administrateur ou clé secrète invalide. Accès refusé." });
 });
 
+// B.3. Password Security Recovery System (OTP code & Email reset flow)
+const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const email = req.body.email ? req.body.email.trim().toLowerCase() : "";
+  if (!email) {
+    return res.status(400).json({ error: "Veuillez fournir une adresse e-mail valide." });
+  }
+
+  // Check if profile exists
+  let userProfile = serverProfiles[email];
+  if (!userProfile && supabaseAdmin) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+      if (data) {
+        userProfile = {
+          email: data.email,
+          name: data.name,
+          password: data.password || "123456",
+          registered: true
+        };
+      }
+    } catch (e: any) {
+      console.error("Supabase forgot-password search error:", e.message);
+    }
+  }
+
+  if (!userProfile) {
+    return res.status(444).json({ error: "Aucun compte candidat n'existe avec cette adresse e-mail. Veuillez d'abord vous inscrire." });
+  }
+
+  // Generate 6-digit secure verification OTP code
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  recoveryCodes.set(email, {
+    code: otpCode,
+    expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes limit
+  });
+
+  let emailSent = false;
+  let errorMsg = "";
+  const transporter = getMailTransporter();
+
+  if (transporter) {
+    try {
+      const senderUser = process.env.SMTP_USER || "votre-gmail-professionnel@gmail.com";
+      const mailOptions = {
+        from: `"ReFaso Educ - Support" <${senderUser}>`,
+        to: email,
+        subject: "🔑 Code de réinitialisation de votre mot de passe - ReFaso Educ",
+        text: `Bonjour ${userProfile.name || "Candidat"},\n\nVous avez demandé la réinitialisation de votre mot de passe pour le portail d'études d'élite ReFaso Educ.\n\nVotre code confidentiel OTP est : ${otpCode}\n\nCe code expirera dans 15 minutes.\n\nCordialement,\nService d'assistance ReFaso Educ`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 30px; background-color: #f8fafc; color: #1e293b;">
+            <div style="text-align: center; margin-bottom: 25px;">
+              <div style="display: inline-block; width: 50px; height: 50px; background: linear-gradient(135deg, #10b981, #3b82f6); border-radius: 12px; line-height: 50px; color: white; font-size: 24px; font-weight: bold;">F</div>
+              <h2 style="color: #0f172a; margin-top: 15px; margin-bottom: 5px; font-weight: 800; font-size: 22px;">Réinitialisation de mot de passe</h2>
+              <p style="color: #64748b; font-size: 13px; margin-top: 5px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">ReFaso Educ - Révisions d'Élite</p>
+            </div>
+            
+            <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+              Bonjour <strong>${userProfile.name || "Candidat"}</strong>,
+              <br/><br/>
+              Vous avez formulé une demande de renouvellement de votre mot de passe d'accès académique ReFaso Educ.
+            </p>
+            
+            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+               <p style="font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 0; margin-bottom: 12px;">Votre code OTP unique temporaire</p>
+               <div style="font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #3b82f6; font-family: 'Courier New', monospace; background-color: #f1f5f9; padding: 12px; border-radius: 8px; display: inline-block; width: fit-content; margin-bottom: 10px;">${otpCode}</div>
+               <p style="font-size: 12px; color: #ef4444; margin: 0; font-weight: 600;">⚠️ Ce code confidentiel expirera dans 15 minutes.</p>
+            </div>
+            
+            <p style="font-size: 13px; color: #475569; line-height: 1.5;">
+              Saisissez ce code dans le formulaire d'application pour valider votre identité et définir votre nouveau mot de passe sécurisé.
+              <br/><br/>
+              Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail en toute sécurité. Votre mot de passe actuel restera inchangé.
+            </p>
+            
+            <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 25px 0;" />
+            <p style="font-size: 11px; text-align: center; color: #94a3b8; line-height: 1.4; margin: 0;">
+              Cet e-mail automatique a été envoyé par <strong>ReFaso Educ</strong>.
+              <br/>
+              Propulsé par le Réseau de Concours d'Ibrahim Sawadogo.
+            </p>
+          </div>
+        `
+      };
+      await transporter.sendMail(mailOptions);
+      emailSent = true;
+    } catch (err: any) {
+      console.error("Nodemailer SMTP forgot password dispatch failed:", err.message);
+      errorMsg = err.message || "Failed to send SMTP email";
+    }
+  }
+
+  if (emailSent) {
+    return res.json({
+      success: true,
+      email,
+      message: "Un code d'autorisation OTP de réinitialisation de 6 chiffres a été envoyé par courrier Gmail."
+    });
+  } else {
+    // Elegant fallback simulation so and user can test the applet without setting up their own SMTP details
+    return res.json({
+      success: true,
+      email,
+      simulation: true,
+      code: otpCode,
+      message: `[SIMULATION DEMO] Un code OTP de récupération a été généré avec succès ! Saisissez le code suivant pour valider votre démo : ${otpCode}`
+    });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: "Tous les champs (E-mail, Code d'autorisation, Nouveau mot de passe) sont obligatoires." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanCode = code.trim();
+  const cleanPassword = newPassword.trim();
+
+  if (cleanPassword.length < 6) {
+    return res.status(400).json({ error: "Votre nouveau mot de passe doit comporter au moins 6 caractères." });
+  }
+
+  const record = recoveryCodes.get(cleanEmail);
+  if (!record) {
+    return res.status(400).json({ error: "Aucun processus de récupération n'a été initié pourcet e-mail." });
+  }
+
+  if (record.code !== cleanCode) {
+    return res.status(400).json({ error: "Le code d'autorisation OTP saisi est incorrect." });
+  }
+
+  if (record.expiresAt < Date.now()) {
+    recoveryCodes.delete(cleanEmail);
+    return res.status(400).json({ error: "Le code d'autorisation a expiré. Veuillez en générer un nouveau." });
+  }
+
+  // Update password in local and supabase database
+  let success = false;
+  if (supabaseAdmin) {
+    try {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .update({ password: cleanPassword })
+        .eq("email", cleanEmail);
+      if (error && error.message && error.message.includes("password")) {
+        console.warn("Falling back db update on profiles table error");
+      } else if (error) {
+        throw error;
+      }
+      success = true;
+    } catch (dbErr: any) {
+      console.error("Supabase password update error, using local:", dbErr.message);
+    }
+  }
+
+  if (serverProfiles[cleanEmail]) {
+    serverProfiles[cleanEmail].password = cleanPassword;
+    success = true;
+  } else {
+    // Initialize profile structure if not in cache
+    serverProfiles[cleanEmail] = {
+      email: cleanEmail,
+      name: cleanEmail.split("@")[0],
+      password: cleanPassword,
+      registered: true,
+      level: "Licence",
+      isPremium: false,
+      registrationDate: new Date().toISOString()
+    };
+    success = true;
+  }
+
+  if (success) {
+    recoveryCodes.delete(cleanEmail);
+    saveLocalDB(); // Persist changes immediately to file!
+    return res.json({ success: true, message: "Félicitations ! Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
+  }
+
+  return res.status(500).json({ error: "Une erreur interne s'est produite lors de l'enregistrement de votre nouveau mot de passe." });
+});
+
 // C. Dynamic Courses syncing & Community/Public directory sharing
 app.get("/api/courses", async (req, res) => {
   const userEmail = req.query.email ? (req.query.email as string).trim().toLowerCase() : "";
@@ -1148,6 +1856,7 @@ app.post("/api/courses", async (req, res) => {
   
   serverCourses = serverCourses.filter(c => c.id !== cleanCourse.id);
   serverCourses.push(cleanCourse);
+  saveLocalDB();
   res.json({ success: true, course: cleanCourse });
 });
 
@@ -1171,6 +1880,7 @@ app.get("/api/history", async (req, res) => {
         const list = data.map((h: any) => ({
           id: h.id,
           userEmail: h.user_email,
+          authorName: h.author_name || h.authorName || "Candidat Élite",
           subjects: h.subjects,
           level: h.level,
           score: h.score,
@@ -1178,7 +1888,8 @@ app.get("/api/history", async (req, res) => {
           percentage: h.percentage,
           questions: typeof h.questions === 'string' ? JSON.parse(h.questions) : h.questions,
           mode: h.mode,
-          date: h.created_at
+          date: h.created_at,
+          isPublic: !!h.is_public || !!h.isPublic || false
         }));
         return res.json(list);
       }
@@ -1191,6 +1902,11 @@ app.get("/api/history", async (req, res) => {
   res.json(filtered);
 });
 
+app.get("/api/public-quizzes", (req, res) => {
+  const list = serverQuizResults.filter(q => q.isPublic);
+  res.json(list);
+});
+
 app.post("/api/history", async (req, res) => {
   const { result } = req.body;
   if (!result || !result.id || !result.userEmail) {
@@ -1201,6 +1917,7 @@ app.post("/api/history", async (req, res) => {
   const cleanResult = {
     id: result.id,
     userEmail: userEmail,
+    authorName: result.authorName || "Candidat Élite",
     subjects: result.subjects || [],
     level: result.level || "Licence",
     score: result.score || 0,
@@ -1208,7 +1925,8 @@ app.post("/api/history", async (req, res) => {
     percentage: result.percentage || 0,
     questions: result.questions || [],
     mode: result.mode || "Entraînement",
-    date: result.date || new Date().toISOString()
+    date: result.date || new Date().toISOString(),
+    isPublic: result.isPublic !== undefined ? !!result.isPublic : false
   };
   
   if (supabaseAdmin) {
@@ -1236,6 +1954,7 @@ app.post("/api/history", async (req, res) => {
   
   serverQuizResults = serverQuizResults.filter(q => q.id !== cleanResult.id);
   serverQuizResults.push(cleanResult);
+  saveLocalDB();
   res.json({ success: true, result: cleanResult });
 });
 
