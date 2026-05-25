@@ -802,6 +802,13 @@ app.post("/api/payments/auto-pay", async (req, res) => {
 
     // Default Sandbox/Demonstration behavior for standard carriers when credentials aren't live yet
     const isProductive = !!(orangeClientId || moovApiKey);
+    const isAdminUser = cleanEmail === (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+
+    if (!isProductive && !isAdminUser) {
+      return res.status(400).json({
+        error: "La passerelle automatique n'est pas encore connectée au contrat marchand de l'opérateur local Orange/Moov. En attendant sa mise en service, veuillez utiliser l'onglet 'Transfert Manuel' juste à côté pour déclarer votre dépôt Orange Money, Moov ou Wave avec sa référence SMS."
+      });
+    }
     
     return res.json({
       success: true,
@@ -877,8 +884,14 @@ app.post("/api/payments/auto-pay", async (req, res) => {
     } else {
       // Standard carrier parameters are not configured in .env yet
       // We authorize mock inputs in test-mode while warning the admin beautifully so they can fill them in!
+      const isAdminUser = cleanEmail === (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+      if (!isAdminUser) {
+        return res.status(400).json({
+          error: "La passerelle de validation automatique n'est pas encore connectée au contrat marchand d'Orange/Moov. Veuillez utiliser le dépôt manuel pour soumettre votre transaction de paiement."
+        });
+      }
       transactionSucceeded = true;
-      gatewayMessage = `Transaction validée avec succès. Mode standard d'évaluation activé pour ${operator === 'orange' ? 'Orange Money' : 'Moov Money'}. Pour connecter votre véritable compte de marchand, renseignez les variables d'environnement ORANGE_MERCHANT_CLIENT_ID et ORANGE_MERCHANT_CLIENT_SECRET sur Render.`;
+      gatewayMessage = `Transaction de simulation administrateur validée avec succès. Mode standard d'évaluation activé pour ${operator === 'orange' ? 'Orange Money' : 'Moov Money'}. Pour connecter votre véritable compte de marchand, renseignez les variables d'environnement ORANGE_MERCHANT_CLIENT_ID et ORANGE_MERCHANT_CLIENT_SECRET sur Render.`;
     }
 
     if (!transactionSucceeded) {
@@ -2017,6 +2030,24 @@ app.post("/api/history", async (req, res) => {
   
   if (supabaseAdmin) {
     try {
+      let pgCreatedAt: string = cleanResult.date;
+      if (pgCreatedAt && pgCreatedAt.includes("/") && !pgCreatedAt.includes("-")) {
+        try {
+          const parts = pgCreatedAt.split(" ")[0].split("/");
+          if (parts.length === 3) {
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const year = parseInt(parts[2], 10);
+            const parsedDate = new Date(year, month, day);
+            if (!isNaN(parsedDate.getTime())) {
+              pgCreatedAt = parsedDate.toISOString();
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       const upsertData: any = {
         id: cleanResult.id,
         user_email: cleanResult.userEmail,
@@ -2029,7 +2060,7 @@ app.post("/api/history", async (req, res) => {
         percentage: cleanResult.percentage,
         questions: JSON.stringify(cleanResult.questions),
         mode: cleanResult.mode,
-        created_at: cleanResult.date
+        created_at: pgCreatedAt
       };
 
       let { error } = await supabaseAdmin.from("quiz_results").upsert(upsertData, { onConflict: "id" });

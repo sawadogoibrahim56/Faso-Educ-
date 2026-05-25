@@ -116,6 +116,19 @@ const TimerCircle = ({ timeLeft, totalTime, isPaused }: { timeLeft: number, tota
   );
 };
 
+// --- Helper for Date Formatting ---
+const formatQuizDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  if (dateStr.includes('/') && !dateStr.includes('-')) return dateStr; // already French format DD/MM/YYYY
+  try {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString('fr-FR');
+    }
+  } catch (e) {}
+  return dateStr;
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -1401,7 +1414,7 @@ export default function App() {
               <div className="flex justify-between items-start">
                 <div>
                   <h3 className="font-bold text-lg dark:text-white">{res.subjects.join(', ')}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{res.date} • {res.level}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{formatQuizDate(res.date)} • {res.level}</p>
                 </div>
                 <div className={cn(
                   "px-3 py-1 rounded-full text-xs font-bold",
@@ -5057,7 +5070,7 @@ export default function App() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="font-bold text-base dark:text-white">{res.subjects.join(', ')}</h3>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{res.date} • {res.level}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">{formatQuizDate(res.date)} • {res.level}</p>
                       </div>
                       <div className={cn(
                         "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider font-mono",
