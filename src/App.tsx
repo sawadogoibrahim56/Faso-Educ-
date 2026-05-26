@@ -374,7 +374,20 @@ export default function App() {
 
     async function syncProfileWithBackend() {
       try {
-        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}`));
+        const deviceId = getOrGenerateDeviceId();
+        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}?deviceId=${deviceId}`));
+        
+        if (res.status === 403 && isActive) {
+          const errData = await res.json();
+          if (errData.error === 'device_locked') {
+            alert("⚠️ Accès déconnecté : Ce compte candidat est maintenant synchronisé et actif sur un autre appareil mobile.");
+            // Log out user
+            setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+            localStorage.removeItem('faso_educ_jwt_token');
+            localStorage.removeItem('faso_educ_user_profile');
+            return;
+          }
+        }
 
         if (res.ok && isActive) {
           const serverProf = await res.json();
@@ -394,7 +407,7 @@ export default function App() {
         const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(profile)
+          body: JSON.stringify({ ...profile, deviceId })
         });
         if (syncRes.ok && isActive) {
           const syncData = await syncRes.json();
@@ -847,114 +860,213 @@ export default function App() {
   // --- Render Helpers ---
 
   const renderHome = () => (
-    <div className="p-6 space-y-8 max-w-2xl mx-auto">
-      <div className="text-center space-y-2">
-        <h1 className="text-4xl font-bold text-faso-green">Faso Educ</h1>
-        <p className="text-gray-600 dark:text-gray-400">Générez des quiz pédagogiques de haute qualité</p>
-      </div>
-
-      {/* Promo banner pour l'Arène de Concours d'Élite Live */}
-      <div className="bg-gradient-to-tr from-faso-blue/10 via-transparent to-faso-green/10 border border-faso-green/20 rounded-3xl p-5 space-y-4 shadow-xs">
-        <div className="flex items-start gap-4">
-          <div className="p-3 bg-faso-green/10 text-faso-green rounded-2xl shrink-0">
-            <Trophy size={28} className="animate-bounce" />
+    <div className="p-4 sm:p-6 lg:p-8 space-y-8 max-w-7xl mx-auto">
+      {/* Elegantly styled hero header */}
+      <div className="flex flex-col md:flex-row items-stretch justify-between gap-6 bg-white/85 dark:bg-gray-900/85 border border-slate-100 dark:border-gray-800/85 rounded-3xl p-6 sm:p-8 shadow-xs backdrop-blur-md">
+        <div className="space-y-3 text-left md:max-w-[70%] flex flex-col justify-center">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-faso-green/10 text-faso-green rounded-full text-xs font-black leading-none uppercase tracking-widest">
+            🇧🇫 Plateforme de Révision Académique d'Élite
           </div>
-          <div className="space-y-1 text-left">
-            <span className="text-[10px] font-bold bg-faso-green/20 text-faso-green px-2.5 py-0.5 rounded-full uppercase tracking-wider">NOUVEAU - EN DIRECT</span>
-            <h3 className="font-extrabold text-base dark:text-white mt-1">Arène de Concours Live</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Préparez-vous à l'excellence ! Invitez des réviseurs avec un lien d'évaluation ou affrontez jusqu'à 10 cerveaux d'IA en direct dans des épreuves minutées avec un tableau des scores dynamique.
-            </p>
-          </div>
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-gray-900 dark:text-white tracking-tight leading-none mt-1">
+            Académie Faso <span className="bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent">Educ</span>
+          </h1>
+          <p className="text-gray-650 dark:text-gray-300 text-sm sm:text-base leading-relaxed font-medium">
+            Le levier d'excellence pour votre préparation académique et la réussite aux grands concours de la fonction publique du Burkina Faso.
+          </p>
         </div>
-        <button
-          onClick={() => {
-            setActiveTab('Competition');
-            setSelectedPostId(null);
-          }}
-          className="w-full py-3 bg-faso-green hover:bg-green-600 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-        >
-          <Sparkles size={14} />
-          Rejoindre l'Arène de Concours d'Élite
-        </button>
+        <div className="bg-linear-to-tr from-faso-blue/5 to-faso-green/5 dark:from-faso-blue/10 dark:to-faso-green/10 p-5 rounded-2xl border border-slate-100 dark:border-gray-800 shrink-0 w-full md:w-auto flex flex-col justify-center text-center md:text-left shadow-2xs">
+          <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest block mb-1">Candidat Actif</span>
+          <span className="text-base sm:text-lg font-black text-gray-900 dark:text-white block truncate max-w-[240px]">{profile.name}</span>
+          <span className="text-xs bg-faso-green/15 text-faso-green dark:text-green-400 px-2.5 py-1 rounded-md font-extrabold uppercase tracking-wide inline-block mt-2 self-center md:self-start">
+            {profile.level}
+          </span>
+        </div>
       </div>
 
-      <div className="space-y-4">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Sujets du quiz</label>
-        {subjects.map((subject, idx) => (
-          <div key={idx} className="flex gap-2">
-            <input
-              type="text"
-              value={subject}
-              onChange={(e) => {
-                const newSubjects = [...subjects];
-                newSubjects[idx] = e.target.value;
-                setSubjects(newSubjects);
-              }}
-              placeholder="Ex: Histoire du Burkina Faso, Algèbre..."
-              className="flex-1 p-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-900 rounded-lg focus:ring-2 focus:ring-faso-blue focus:border-transparent outline-none dark:text-white"
-            />
-            {subjects.length > 1 && (
-              <button 
-                onClick={() => setSubjects(subjects.filter((_, i) => i !== idx))}
-                className="p-3 text-faso-red hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-              >
-                <X size={20} />
-              </button>
-            )}
-          </div>
-        ))}
-        <button 
-          onClick={() => setSubjects([...subjects, ''])}
-          className="flex items-center gap-2 text-faso-blue font-medium hover:underline"
-        >
-          <Plus size={18} /> Ajouter un sujet
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <button 
-          onClick={() => startQuiz('Entraînement')}
-          disabled={isGenerating || subjects.every(s => !s.trim())}
-          className="flex flex-col items-center gap-3 p-6 bg-white dark:bg-gray-900 border-2 border-faso-blue rounded-2xl hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all disabled:opacity-50"
-        >
-          <BookOpen className="text-faso-blue" size={32} />
-          <span className="font-bold dark:text-white">Entraînement</span>
-        </button>
-        <button 
-          onClick={() => startQuiz('Test')}
-          disabled={isGenerating || subjects.every(s => !s.trim())}
-          className="flex flex-col items-center gap-3 p-6 bg-white dark:bg-gray-900 border-2 border-faso-yellow rounded-2xl hover:bg-yellow-50 dark:hover:bg-yellow-900/20 transition-all disabled:opacity-50"
-        >
-          <Target className="text-faso-yellow" size={32} />
-          <span className="font-bold dark:text-white">Test</span>
-        </button>
-        <button 
-          onClick={() => startQuiz('Concours')}
-          disabled={isGenerating || subjects.every(s => !s.trim())}
-          className="flex flex-col items-center gap-3 p-6 bg-white dark:bg-gray-900 border-2 border-faso-green rounded-2xl hover:bg-green-50 dark:hover:bg-green-900/20 transition-all disabled:opacity-50"
-        >
-          <Users className="text-faso-green" size={32} />
-          <span className="font-bold dark:text-white">Concours</span>
-        </button>
-      </div>
-
-      {isGenerating && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-2xl flex flex-col items-center gap-4 max-w-xs text-center shadow-2xl border dark:border-gray-800">
-            <Loader2 className="animate-spin text-faso-blue" size={48} />
-            <p className="font-bold text-lg dark:text-white">Génération de votre quiz...</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">L'IA prépare des questions nuancées et pédagogiques.</p>
+      {/* Grid Layout: Left active Arena, Right Step progress and resources */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        
+        {/* Left Column: Huge, gorgeous interactive Live Competition Arena */}
+        <div className="lg:col-span-7 space-y-6">
+          <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border-2 border-slate-850 rounded-3xl p-6 sm:p-8 lg:p-10 text-white shadow-xl hover:shadow-2xl transition-all duration-300 group">
+            {/* Subtle decorative glowing backdrops */}
+            <div className="absolute -top-10 -right-10 w-80 h-80 bg-faso-blue/15 rounded-full blur-3xl pointer-events-none group-hover:bg-faso-blue/20 transition-all duration-500" />
+            <div className="absolute -bottom-10 -left-10 w-80 h-80 bg-faso-green/10 rounded-full blur-3xl pointer-events-none group-hover:bg-faso-green/15 transition-all duration-500" />
             
-            <button
-              onClick={cancelQuizGeneration}
-              className="mt-2 w-full px-4 py-2.5 bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50 text-red-600 dark:text-red-400 font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2 border border-red-200 dark:border-red-900/30"
-            >
-              Annuler et Retour
-            </button>
+            <div className="relative space-y-6 text-left">
+              <div className="flex items-center gap-3.5 flex-wrap">
+                <span className="text-[10px] sm:text-[11px] font-black bg-faso-green text-white px-3 py-1 rounded-full uppercase tracking-widest shadow-sm">
+                  ⚡ ESPACE DE GÉNÉRATION LIVE
+                </span>
+                <span className="text-[10px] sm:text-[11px] font-black bg-faso-blue text-white px-3 py-1 rounded-full uppercase tracking-widest shadow-sm">
+                  SOLO • ROBOTS • MULTIJOUEUR
+                </span>
+              </div>
+
+              <div className="flex gap-4 items-start sm:items-center">
+                <div className="p-4 bg-gradient-to-br from-faso-green to-faso-blue text-white rounded-2xl shrink-0 shadow-lg group-hover:scale-105 transition-all duration-300">
+                  <Trophy size={36} className="animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-2xl tracking-tight text-white sm:text-3xl leading-none">
+                    Arène de Concours d'Élite
+                  </h3>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mt-1.5 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-faso-green animate-ping"></span>
+                    Génération IA activée sur mesure
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-sm text-gray-300 leading-relaxed font-normal">
+                Lancez une épreuve d'évaluation instantanée adaptée à votre niveau. 
+                Ce module centralise désormais l'intégralité de la génération de QCM : 
+                composez seul sous haute surveillance temporelle, intégrez des robots d'IA 
+                calculateurs en temps réel, ou défiez d'autres réviseurs en ligne !
+              </p>
+
+              {/* Enhanced Arena mode list on the cover */}
+              <div className="grid grid-cols-3 gap-3 pt-2">
+                <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1 text-center hover:bg-white/10 transition-colors">
+                  <User size={18} className="text-faso-blue mx-auto" />
+                  <span className="block text-[10px] font-black text-gray-300 uppercase">Mode Solo</span>
+                </div>
+                <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1 text-center hover:bg-white/10 transition-colors">
+                  <Sparkles size={18} className="text-faso-green mx-auto" />
+                  <span className="block text-[10px] font-black text-gray-300 uppercase">Avec Robots</span>
+                </div>
+                <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1 text-center hover:bg-white/10 transition-colors">
+                  <Users size={18} className="text-faso-yellow mx-auto" />
+                  <span className="block text-[10px] font-black text-gray-300 uppercase">En Ligne</span>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  onClick={() => {
+                    setActiveTab('Competition');
+                    playSound('correct');
+                  }}
+                  className="w-full sm:w-auto px-8 py-4.5 bg-gradient-to-r from-faso-green via-[#00b274] to-faso-blue hover:brightness-110 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-faso-green/20 hover:shadow-faso-green/45 transform active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Sparkles size={16} />
+                  Rejoindre l'Arène & Générer une Épreuve
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-      )}
+
+        {/* Right Column: Dynamic structured insights & Resources */}
+        <div className="lg:col-span-12 xl:col-span-5 space-y-6 text-left">
+          
+          {/* Method / How it works vertically streamlined */}
+          <div className="bg-white/90 dark:bg-gray-900/90 border border-slate-100 dark:border-slate-800/80 rounded-3xl p-6 space-y-4 shadow-xs">
+            <h3 className="text-lg font-extrabold text-gray-900 dark:text-white flex items-center gap-2">
+              <BookOpenCheck size={20} className="text-faso-green" />
+              L'Évaluation Éducative
+            </h3>
+            
+            <div className="space-y-4.5">
+              {/* Step 1 */}
+              <div className="flex gap-3.5 items-start">
+                <div className="w-8 h-8 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 font-black text-xs flex items-center justify-center shrink-0 border border-purple-500/20">
+                  Ⅰ
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs dark:text-white uppercase tracking-wider leading-none">Trois Dimensions</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 leading-normal mt-1 font-medium">
+                    Questions approfondies évaluant les facultés Intellectuelles (réflexion logicielle), Morales (code administratif) et Retenue Mémorielle.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="flex gap-3.5 items-start">
+                <div className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-black text-xs flex items-center justify-center shrink-0 border border-amber-500/20">
+                  Ⅱ
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs dark:text-white uppercase tracking-wider leading-none">Robots & Simulateurs</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 leading-normal mt-1 font-medium">
+                    Les cerveaux autonomes générés calculent avec précision, reproduisant fidèlement les baromètres de stress du Concours.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="flex gap-3.5 items-start">
+                <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-black text-xs flex items-center justify-center shrink-0 border border-emerald-500/20">
+                  Ⅲ
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs dark:text-white uppercase tracking-wider leading-none">Bulletin & PDF</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 leading-normal mt-1 font-medium">
+                    Générez et téléchargez un bulletin d'évaluation officiel avec corrections détaillées rédigées par l'Intelligence Artificielle.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Academic Resources Quick Navigation Cards */}
+          <div className="space-y-3">
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">
+              Ressources d'Apprentissage d’Élite
+            </h4>
+
+            <div className="grid grid-cols-1 gap-3">
+              {/* Card 1: Courses */}
+              <div 
+                onClick={() => {
+                  setActiveTab('Cours');
+                  playSound('correct');
+                }}
+                className="group p-5 bg-white/90 dark:bg-gray-900/90 border border-slate-100 dark:border-slate-800/80 rounded-2xl flex items-start gap-4 hover:border-faso-green/50 hover:bg-linear-to-r hover:from-white hover:to-faso-green/5 dark:hover:to-faso-green/10 cursor-pointer transition-all duration-300 shadow-2xs"
+              >
+                <div className="p-2.5 bg-faso-green/10 text-faso-green rounded-xl group-hover:scale-110 transition-all">
+                  <BookOpen size={20} />
+                </div>
+                <div className="space-y-0.5 flex-1">
+                  <span className="text-[9px] font-black text-faso-green uppercase tracking-wider">Académie</span>
+                  <h4 className="font-extrabold text-sm dark:text-white flex items-center gap-1">
+                    Bibliothèque de Cours
+                    <ChevronRight size={14} className="opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                  </h4>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                    Consultez et révisez les formules de Solow, concepts macroéconomiques ou théories de l'État burkinabè.
+                  </p>
+                </div>
+              </div>
+
+              {/* Card 2: Forum */}
+              <div 
+                onClick={() => {
+                  setActiveTab('Forum');
+                  playSound('correct');
+                }}
+                className="group p-5 bg-white/90 dark:bg-gray-900/90 border border-slate-100 dark:border-slate-800/80 rounded-2xl flex items-start gap-4 hover:border-faso-blue/50 hover:bg-linear-to-r hover:from-white hover:to-faso-blue/5 dark:hover:to-faso-blue/10 cursor-pointer transition-all duration-300 shadow-2xs"
+              >
+                <div className="p-2.5 bg-faso-blue/10 text-faso-blue rounded-xl group-hover:scale-110 transition-all">
+                  <Users size={20} />
+                </div>
+                <div className="space-y-0.5 flex-1">
+                  <span className="text-[9px] font-black text-faso-blue uppercase tracking-wider">Communauté</span>
+                  <h4 className="font-extrabold text-sm dark:text-white flex items-center gap-1">
+                    Forum d'Échanges
+                    <ChevronRight size={14} className="opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                  </h4>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                    Interagissez avec d'autres candidats, posez des questions complexes et lisez les réponses assistées par IA.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
   );
 
@@ -2576,8 +2688,10 @@ export default function App() {
   };
 
   const [authMode, setAuthMode] = useState<'register' | 'login' | 'forgot' | 'reset'>('register');
-  const [regName, setRegName] = useState('');
+  const [regFirstName, setRegFirstName] = useState('');
+  const [regLastName, setRegLastName] = useState('');
   const [regEmail, setRegEmail] = useState('');
+  const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('123456');
   const [regLevel, setRegLevel] = useState<Level>('Licence');
   const [regSimTime, setRegSimTime] = useState<'normal' | 'expired'>('normal');
@@ -2601,7 +2715,10 @@ export default function App() {
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim() || !regPassword.trim()) return;
+    if (!regFirstName.trim() || !regLastName.trim() || !regEmail.trim() || !regPhone.trim() || !regPassword.trim()) {
+      setAuthError("Veuillez remplir tous les champs obligatoires (Téléphone, Gmail, Nom, Prénom, Mot de passe).");
+      return;
+    }
     setAuthError(null);
     setIsDeviceLocked(false);
     setLockedEmail('');
@@ -2618,7 +2735,7 @@ export default function App() {
       if (res.ok) {
         const existingProf = await res.json();
         if (existingProf && existingProf.registered) {
-          setAuthError("Cet email est déjà enregistré ! Veuillez utiliser l'onglet de connexion.");
+          setAuthError("Cet email ou cet identifiant est déjà enregistré ! Veuillez utiliser la connexion.");
           playSound('wrong');
           return;
         }
@@ -2627,10 +2744,15 @@ export default function App() {
       console.warn("Offline check during registration:", err);
     }
 
+    const deviceId = getOrGenerateDeviceId();
+    const fullName = `${regFirstName.trim()} ${regLastName.trim()}`;
     const newProfile: UserProfile = {
       registered: true,
-      name: regName.trim(),
+      name: fullName,
+      firstName: regFirstName.trim(),
+      lastName: regLastName.trim(),
       email: regEmail.trim().toLowerCase(),
+      phone: regPhone.trim(),
       level: regLevel,
       registrationDate: date.toISOString(),
       isPremium: false,
@@ -2640,15 +2762,16 @@ export default function App() {
       learningStreak: 1,
       points: 100,
       targetExam: 'Inspecteur des Douanes',
-      regionName: 'Centre (Ouagadougou)'
+      regionName: 'Centre (Ouagadougou)',
+      boundDeviceId: deviceId
     };
 
-    // Synchronously force save registration to backend local DB to guarantee persistency
+    // Synchronously force save registration to backend local DB for ultimate safety
     try {
       const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProfile)
+        body: JSON.stringify({ ...newProfile, deviceId })
       });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
@@ -2657,7 +2780,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.warn("Direct backend registration sync failed (offline or container setup delay), using local storage state:", e);
+      console.warn("Direct backend registration sync failed, using local storage state:", e);
     }
 
     setProfile(newProfile);
@@ -2672,8 +2795,26 @@ export default function App() {
     setLockedEmail('');
     setTransferStatusMsg(null);
 
+    const deviceId = getOrGenerateDeviceId();
+    const lookupKey = regEmail.trim().toLowerCase();
+
     try {
-      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}`));
+      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(lookupKey)}?deviceId=${deviceId}`));
+      
+      if (res.status === 403) {
+        const errData = await res.json();
+        if (errData.error === 'device_locked') {
+          setAuthError(errData.message);
+          setIsDeviceLocked(true);
+          setLockedEmail(errData.boundDeviceId || lookupKey);
+          playSound('wrong');
+          return;
+        } else if (errData.error === 'banned') {
+          setAuthError(errData.message);
+          playSound('wrong');
+          return;
+        }
+      }
 
       if (res.ok) {
         const existingProf = await res.json();
@@ -2683,7 +2824,10 @@ export default function App() {
             setProfile({
               registered: true,
               name: existingProf.name || 'Candidat Élite',
+              firstName: existingProf.firstName || '',
+              lastName: existingProf.lastName || '',
               email: existingProf.email,
+              phone: existingProf.phone || '',
               level: existingProf.level || 'Licence',
               registrationDate: existingProf.registrationDate || new Date().toISOString(),
               isPremium: !!existingProf.isPremium,
@@ -2693,7 +2837,8 @@ export default function App() {
               points: existingProf.points || 120,
               targetExam: existingProf.targetExam || 'Concours Direct',
               regionName: existingProf.regionName || 'Centre (Ouagadougou)',
-              password: serverPass
+              password: serverPass,
+              boundDeviceId: existingProf.boundDeviceId || deviceId
             });
             playSound('finish');
             return;
@@ -2708,12 +2853,12 @@ export default function App() {
       console.warn("Offline fallback for login:", err);
     }
 
-    // Local Storage Fallback
+    // Local Storage Fallback with either Email or Phone number
     const localProfStr = localStorage.getItem('faso_educ_user_profile');
     if (localProfStr) {
       try {
         const lp = JSON.parse(localProfStr);
-        if (lp && lp.email?.toLowerCase() === regEmail.trim().toLowerCase()) {
+        if (lp && (lp.email?.toLowerCase() === lookupKey || lp.phone?.replace(/\s+/g, "") === lookupKey.replace(/\s+/g, ""))) {
           const pass = lp.password || '123456';
           if (pass === regPassword.trim()) {
             setProfile({ ...lp, registered: true });
@@ -2728,7 +2873,7 @@ export default function App() {
       } catch (err) { /* ignore */ }
     }
 
-    setAuthError("Cet email n'est pas enregistré ! Veuillez créer un compte.");
+    setAuthError("Aucun compte trouvé avec cet e-mail ou ce numéro de téléphone. Veuillez vous inscrire d'abord.");
     playSound('wrong');
   };
 
@@ -2924,33 +3069,62 @@ export default function App() {
                   ✨ Votre Port d'Inscription Académique
                 </p>
                 <p className="text-start">
-                  Inscrivez-vous instantanément pour bénéficier d'une <strong>période d'essai gratuite de 7 jours</strong>. Accédez à la génération automatique de quiz intelligents, à l'arène de compétition, et aux fiches récapitulatives d'élite.
+                  Inscrivez-vous avec vos identifiants réels pour bénéficier d'une **période d'essai gratuite de 7 jours**. Connexion simultanée sur 2 téléphones interdite (**Device Binding**).
                 </p>
               </div>
 
               <form onSubmit={handleRegisterSubmit} className="space-y-4 text-start">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                      Prénom
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex. Ibrahim"
+                      value={regFirstName}
+                      onChange={(e) => setRegFirstName(e.target.value)}
+                      className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
+                      Nom
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex. Sawadogo"
+                      value={regLastName}
+                      onChange={(e) => setRegLastName(e.target.value)}
+                      className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                    Nom complet
+                    Numéro de Téléphone
                   </label>
                   <input
-                    type="text"
+                    type="tel"
                     required
-                    placeholder="Ex. Ibrahim Sawadogo"
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
+                    placeholder="Ex. +226 70123456"
+                    value={regPhone}
+                    onChange={(e) => setRegPhone(e.target.value)}
                     className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                    Adresse Email
+                    Adresse Gmail / E-mail
                   </label>
                   <input
                     type="email"
                     required
-                    placeholder="votre.nom@compte.com"
+                    placeholder="votre.nom@gmail.com"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
                     className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
@@ -3017,12 +3191,12 @@ export default function App() {
             <form onSubmit={handleLoginSubmit} className="space-y-4 text-start">
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Adresse Email
+                  Adresse Gmail OU Numéro de Téléphone
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   required
-                  placeholder="votre.nom@compte.com"
+                  placeholder="votre.nom@gmail.com ou +226..."
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
                   className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white"
@@ -3816,15 +3990,15 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2 pt-1">
                       <div className="flex justify-between items-center p-2 rounded-lg bg-orange-500/10 border border-orange-500/30">
                         <span className="font-bold text-orange-400">Orange Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.orange?.num || "+226 56 85 32 47"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.orange?.num || "+226 76 00 11 22"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
                         <span className="font-bold text-indigo-400">Moov Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.moov?.num || "+226 56 85 32 47"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.moov?.num || "+226 60 44 55 66"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-sky-500/10 border border-sky-500/30">
                         <span className="font-bold text-sky-400">Wave Cash :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.wave?.num || "+226 56 85 32 47"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.wave?.num || "+226 55 88 99 00"}</code>
                       </div>
                     </div>
                     <p className="text-[10px] text-gray-400 italic mt-1.5">
@@ -5531,14 +5705,14 @@ export default function App() {
                   <div className="p-3 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-orange-400 block">Orange Money</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Sawadogo IBRAHIM"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Ibrahim Sawadogo"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.orange?.num || "+226 56 85 32 47"}
+                        {paymentCredentials?.orange?.num || "+226 76 00 11 22"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.orange?.num || "56853247").replace(/\D/g, ''), 'orange')}
+                      onClick={() => handleCopyText((paymentCredentials?.orange?.num || "76001122").replace(/\D/g, ''), 'orange')}
                       className="mt-3.5 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'orange' ? "Copié ✓" : (
@@ -5554,14 +5728,14 @@ export default function App() {
                   <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Moov Money</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Sawadogo IBRAHIM"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Ibrahim Sawadogo"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.moov?.num || "+226 56 85 32 47"}
+                        {paymentCredentials?.moov?.num || "+226 60 44 55 66"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.moov?.num || "56853247").replace(/\D/g, ''), 'moov')}
+                      onClick={() => handleCopyText((paymentCredentials?.moov?.num || "60445566").replace(/\D/g, ''), 'moov')}
                       className="mt-3.5 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'moov' ? "Copié ✓" : (
@@ -5577,14 +5751,14 @@ export default function App() {
                   <div className="p-3 bg-sky-500/5 dark:bg-sky-500/10 border border-sky-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 block">Wave Transfer</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Sawadogo IBRAHIM"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Ibrahim Sawadogo"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.wave?.num || "+226 56 85 32 47"}
+                        {paymentCredentials?.wave?.num || "+226 55 88 99 00"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.wave?.num || "56853247").replace(/\D/g, ''), 'wave')}
+                      onClick={() => handleCopyText((paymentCredentials?.wave?.num || "55889900").replace(/\D/g, ''), 'wave')}
                       className="mt-3.5 py-1.5 px-3 bg-sky-500 hover:bg-sky-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'wave' ? "Copié ✓" : (
@@ -5957,6 +6131,56 @@ export default function App() {
         });
       } catch (e) {
         console.warn("Offline fallback for unbanning registered:", e);
+      }
+    };
+
+    const handleResetDeviceAction = async (emailToReset: string) => {
+      const cleanEmail = emailToReset.trim().toLowerCase();
+      if (!cleanEmail) return;
+
+      if (confirm(`Voulez-vous vraiment détacher l'appareil mobile lié au candidat ${cleanEmail} ?`)) {
+        playSound('wrong');
+        try {
+          const res = await fetch(getApiUrl('/api/admin/reset-device'), {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+            },
+            body: JSON.stringify({ email: cleanEmail })
+          });
+          if (res.ok) {
+            alert(`L'appareil mobile du candidat ${cleanEmail} a bien été détaché.`);
+            fetchAdminUsers();
+          }
+        } catch (e) {
+          console.warn("Offline fallback for resetting device:", e);
+        }
+      }
+    };
+
+    const handleDeclineTransferAction = async (emailToDecline: string) => {
+      const cleanEmail = emailToDecline.trim().toLowerCase();
+      if (!cleanEmail) return;
+
+      if (confirm(`Voulez-vous décliner la demande d'authentification de transfert pour ${cleanEmail} ?`)) {
+        playSound('wrong');
+        try {
+          const res = await fetch(getApiUrl('/api/admin/decline-transfer'), {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+            },
+            body: JSON.stringify({ email: cleanEmail })
+          });
+          if (res.ok) {
+            alert(`La demande de transfert pour ${cleanEmail} a bien été déclinée.`);
+            fetchAdminUsers();
+          }
+        } catch (e) {
+          console.warn("Offline fallback for declining transfer:", e);
+        }
       }
     };
 
@@ -6556,11 +6780,27 @@ export default function App() {
                                       ⚠️ Réf déclaré : <strong className="font-mono text-white">{associatedPendingTx.reference}</strong> ({associatedPendingTx.amount} FCFA sur {associatedPendingTx.operator.toUpperCase()})
                                     </div>
                                   )}
+
+                                  {u.phone && (
+                                    <div className="text-[10px] text-emerald-400 font-bold mt-1">
+                                      📞 Tél : {u.phone}
+                                    </div>
+                                  )}
+                                  {u.boundDeviceId && (
+                                    <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
+                                      📱 Appareil lié : <span className="font-mono bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-white">{u.boundDeviceId.substring(0, 10)}...</span>
+                                    </div>
+                                  )}
+                                  {u.transferRequested && (
+                                    <div className="text-[10px] text-rose-400 font-black uppercase mt-1.5 animate-pulse bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded">
+                                      📲 Transfert d'appareil à valider
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
                               {/* Right context actions */}
-                              <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                              <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-center">
                                 {/* Direct quick promotion / privilege grant toggle button */}
                                 <button
                                   type="button"
@@ -6574,6 +6814,29 @@ export default function App() {
                                 >
                                   {u.isPremium ? "✕ Retirer Forfait" : "⚡ Activer Premium"}
                                 </button>
+
+                                {/* Device binding actions */}
+                                {u.boundDeviceId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetDeviceAction(u.email)}
+                                    className="p-1.5 bg-slate-900 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/20 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
+                                    title="Détacher le terminal mobile lié"
+                                  >
+                                    🔌 Détacher Mobile
+                                  </button>
+                                )}
+
+                                {u.transferRequested && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeclineTransferAction(u.email)}
+                                    className="p-1.5 bg-rose-950 text-rose-400 hover:bg-rose-900/40 border border-rose-800 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
+                                    title="Refuser l'autorisation de transfert"
+                                  >
+                                    📲 Décliner Transfert
+                                  </button>
+                                )}
 
                                 {/* Direct safety block option */}
                                 {!isBannedLocal ? (

@@ -79,6 +79,9 @@ export interface UserProfile {
   registered: boolean;
   name: string;
   email: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
   level: Level;
   registrationDate: string; // ISO string
   isPremium: boolean;

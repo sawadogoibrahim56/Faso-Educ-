@@ -19,6 +19,7 @@ import {
   Plus, 
   X, 
   ArrowRight,
+  ChevronRight,
   MessageSquare,
   Award,
   Zap,
@@ -124,6 +125,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 }) => {
   // Stage: 'setup' | 'lobby' | 'active' | 'podium'
   const [stage, setStage] = useState<'setup' | 'lobby' | 'active' | 'podium'>('setup');
+  const [arenaType, setArenaType] = useState<'solo' | 'robots' | 'multiplayer'>('solo');
   
   // Settings
   const [subject, setSubject] = useState<string>("Microéconomie Moderne (Cobb-Douglas & Cournot)");
@@ -541,7 +543,10 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       status: 'waiting'
     }));
 
-    setParticipants([userPart, ...aiParts, ...humanParts]);
+    const activeAIs = arenaType === 'robots' ? aiParts : [];
+    const activeHumans = (arenaType === 'robots' || arenaType === 'multiplayer') ? humanParts : [];
+
+    setParticipants([userPart, ...activeAIs, ...activeHumans]);
 
     // Add inaugural greeting chat
     setChatMessages([
@@ -1257,195 +1262,374 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   const sortedParticipants = [...participants].sort((a, b) => b.score - a.score);
 
   return (
-    <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between border-b dark:border-gray-800 pb-4">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-8 pb-16">
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-850 pb-5">
         <button 
           onClick={onBack}
-          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 font-bold hover:underline"
+          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 font-extrabold text-sm hover:text-faso-blue hover:gap-3 transition-all duration-300 group cursor-pointer"
         >
-          <ArrowLeft size={18} /> Retour au tableau
+          <ArrowLeft size={18} className="text-gray-400 group-hover:text-faso-blue" />
+          <span>Retour au tableau</span>
         </button>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className="p-2 border dark:border-gray-800 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition-all text-gray-600 dark:text-gray-400"
+            onClick={() => {
+              setSoundEnabled(!soundEnabled);
+              playSound('correct');
+            }}
+            className="p-3 bg-white dark:bg-gray-950 border border-slate-100 dark:border-gray-800 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-900 shadow-2xs transition-all text-gray-600 dark:text-gray-400 cursor-pointer flex items-center gap-1.5"
+            title={soundEnabled ? "Désactiver les effets sonores" : "Activer les effets sonores"}
           >
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+            {soundEnabled ? <Volume2 size={16} className="text-faso-green" /> : <VolumeX size={16} className="text-gray-400" />}
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Effets</span>
           </button>
         </div>
       </div>
 
       {/* SETUP PHASE: Configurer le concours */}
       {stage === 'setup' && (
-        <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="text-center space-y-2">
-            <div className="inline-flex p-3 bg-faso-blue/10 rounded-full text-faso-blue mb-2">
-              <Trophy size={40} className="animate-pulse" />
+        <div className="space-y-6">
+          {/* Header Area */}
+          <div className="bg-linear-to-r from-faso-blue/10 via-amber-500/5 to-faso-green/10 border border-slate-100 dark:border-gray-850 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-2xs relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 right-0 w-48 h-48 bg-faso-blue/10 rounded-full blur-3xl -mr-12 -mt-12 pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-faso-green/10 rounded-full blur-3xl -ml-12 -mb-12 pointer-events-none" />
+
+            <div className="text-left space-y-2 max-w-2xl relative">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-faso-green/10 text-faso-green rounded-full text-[10px] font-black uppercase tracking-widest leading-none">
+                🇧🇫 Configurateur d'Évaluation Académique
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+                Arène de Révision de Concours
+              </h2>
+              <p className="text-xs sm:text-sm text-gray-650 dark:text-gray-350 leading-relaxed font-semibold">
+                Concevez des scénarios d'examens réalistes alignés sur les programmes burkinabè officiels. Saisissez votre sujet ou cliquez sur l'un de nos thèmes recommandés ci-dessous pour démarrer instantanément !
+              </p>
             </div>
-            <h2 className="text-2xl font-black dark:text-white">Arène de Concours d'Élite en Direct</h2>
-            <p className="text-sm text-gray-500 max-w-lg mx-auto">
-              Mesurez vos aptitudes en temps réel face à des pairs invités ou des adversaires IA. Un classement instantané est calculé à chaque question !
-            </p>
+
+            {/* QUICK LAUNCH CTA AT THE TOP: Zero scroll required to enter the lobby! */}
+            <div className="shrink-0 w-full md:w-auto relative">
+              <button
+                onClick={handleStartLobby}
+                className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-faso-green to-faso-blue hover:brightness-110 text-white font-extrabold text-xs uppercase tracking-widest rounded-2xl shadow-lg shadow-faso-green/20 hover:shadow-faso-green/45 transform active:scale-98 transition-all flex items-center justify-center gap-2.5 cursor-pointer"
+              >
+                <Play size={16} />
+                <span>Lancer le Salon</span>
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-            {/* Subject Selection Column */}
-            <div className="space-y-4">
-              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
-                <Settings size={18} className="text-faso-blue" />
-                1. Structure de l'épreuve
-              </h3>
+          {/* Core Setup Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* Left Column: Form Adjustments (Input settings + Candidates Presence) */}
+            <div className="lg:col-span-8 space-y-6">
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase">Sujet / Matière d'évaluation</label>
+              {/* CARD 1: EXAMEN CONFIGURATION */}
+              <div className="bg-white/95 dark:bg-gray-900/95 border border-slate-150/45 dark:border-gray-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-[0_12px_44px_rgba(0,181,226,0.035)] relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-1.5 bg-linear-to-r from-faso-blue to-faso-green" />
+                
+                <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2.5 pb-2 border-b border-gray-100 dark:border-gray-850">
+                  <span className="p-1.5 bg-faso-blue/10 text-faso-blue rounded-lg shrink-0"><Settings size={16} /></span>
+                  1. Paramètres de l'épreuve d'évaluation
+                </h3>
+
+                {/* Subject Selector Field */}
                 <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-gray-500 dark:text-gray-450 uppercase tracking-widest flex items-center gap-1">
+                      <span>Matière / Sujet de Concours</span>
+                      <span className="text-red-500 font-bold">*</span>
+                    </label>
+                    {subject && (
+                      <span className="text-[10px] font-bold text-faso-blue uppercase tracking-widest bg-faso-blue/10 px-2 py-0.5 rounded-md">
+                        Matière Sélectionnée
+                      </span>
+                    )}
+                  </div>
+                  
                   <input
                     type="text"
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
-                    placeholder="Saisissez ou choisissez un sujet ci-dessous"
-                    className="w-full p-3 border dark:border-gray-800 rounded-xl outline-none focus:ring-1.5 focus:ring-faso-blue dark:bg-gray-950 dark:text-white font-bold text-sm"
+                    placeholder="Saisissez un sujet personnalisé ou cliquez parmi les propositions ci-dessous..."
+                    className="w-full p-4 border border-gray-200/80 dark:border-gray-805 rounded-2xl outline-none focus:ring-2 focus:ring-faso-blue/45 dark:bg-gray-950 dark:text-white font-extrabold text-sm placeholder-gray-400 transition-all dark:focus:ring-faso-blue/40 shadow-2xs"
                   />
-                  <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto pr-1">
-                    {subjectSuggestions.map((s, idx) => (
+
+                  {/* Redesigned interactive beautiful Suggestions cards in columns */}
+                  <div className="space-y-2 bg-slate-50/50 dark:bg-gray-950/40 p-3 rounded-2xl border border-gray-100 dark:border-gray-850 text-left">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block pl-1">🎯 Thématiques phares du Burkina Faso :</span>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {[
+                        { title: "Microéconomie (Optimisation, Cobb-Douglas, Coûts marginaux)", category: "Microéconomie", icon: "📊" },
+                        { title: "Macroéconomie (Multiplicateur keynésien, IS-LM, Modèle de Solow)", category: "Macroéconomie", icon: "📈" },
+                        { title: "Statistiques & Probabilités (Correction de Bessel, Intervalles de confiance)", category: "Statistiques", icon: "🧠" },
+                        { title: "Politiques Publiques & Finances Nationales de l'UEMOA", category: "UEMOA", icon: "🌍" },
+                        { title: "Mathématiques Générales & Algèbre Linéaire des Concours", category: "Mathématiques", icon: "🧬" }
+                      ].map((s, idx) => {
+                        const isSelected = subject === s.title;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setSubject(s.title);
+                              playSound('correct');
+                            }}
+                            className={cn(
+                              "text-left p-3 rounded-xl border text-xs transition-all duration-200 flex items-start gap-2.5 cursor-pointer relative overflow-hidden group w-full",
+                              isSelected 
+                                ? "bg-faso-blue/10 text-faso-blue border-faso-blue dark:bg-faso-blue/20" 
+                                : "bg-white dark:bg-gray-900 border-gray-200/70 dark:border-gray-805 text-gray-750 dark:text-gray-300 hover:border-blue-400 hover:bg-blue-50/10"
+                            )}
+                          >
+                            <span className="text-xl shrink-0 group-hover:scale-115 transition-transform">{s.icon}</span>
+                            <div className="leading-snug flex-1 min-w-0">
+                              <span className={cn(
+                                "text-[9px] font-black uppercase tracking-wider block mb-0.5",
+                                isSelected ? "text-faso-blue" : "text-faso-green"
+                              )}>
+                                {s.category}
+                              </span>
+                              <span className="font-extrabold text-[11px] block text-gray-800 dark:text-gray-200 truncate leading-tight">
+                                {s.title}
+                              </span>
+                            </div>
+                            {isSelected && (
+                              <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-faso-blue animate-ping" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custom modern choice button selectors for difficulty level and timer duration */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  
+                  {/* Visual buttons for Level */}
+                  <div className="space-y-2 text-left">
+                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest block pl-1">🎚️ Niveau d'exigence académique</label>
+                    <div className="grid grid-cols-3 gap-1.5 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
+                      {(['Premier cycle', 'Licence', 'Master'] as Level[]).map((l) => (
+                        <button
+                          key={l}
+                          type="button"
+                          onClick={() => {
+                            setLevel(l);
+                            playSound('correct');
+                          }}
+                          className={cn(
+                            "py-2.5 px-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer text-center truncate",
+                            level === l
+                              ? "bg-faso-blue text-white shadow-xs font-black"
+                              : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                          )}
+                        >
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Visual buttons for reflection timer duration per QCM */}
+                  <div className="space-y-2 text-left">
+                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest block pl-1">⏱️ Durée de réflexion / QCM</label>
+                    <div className="grid grid-cols-5 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
+                      {([15, 30, 45, 60, 90] as number[]).map((seconds) => (
+                        <button
+                          key={seconds}
+                          type="button"
+                          onClick={() => {
+                            setTimeLimit(seconds);
+                            playSound('correct');
+                          }}
+                          className={cn(
+                            "py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer text-center",
+                            timeLimit === seconds
+                              ? "bg-faso-green text-white shadow-xs font-black"
+                              : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                          )}
+                        >
+                          {seconds}s
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[9px] text-gray-450 dark:text-gray-500 block text-right mt-1 italic">
+                      {timeLimit === 15 ? "Format Blitz : très rythmé" : timeLimit === 90 ? "Format Théorique : propice aux calculs" : "Format Standard équilibré"}
+                    </span>
+                  </div>
+
+                </div>
+
+                {/* Questions Volume Preset buttons & Slider */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pl-1">
+                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest">📝 Nombre total de questions (QCMs)</label>
+                    <span className="text-xs font-black bg-faso-green/10 text-faso-green dark:text-green-400 px-3 py-1 rounded-full border border-faso-green/20">
+                      {questionCount} questions générées
+                    </span>
+                  </div>
+
+                  {/* Presets Grid */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {[10, 20, 40, 60].map((count) => (
                       <button
-                        key={idx}
-                        onClick={() => setSubject(s.title)}
+                        key={count}
+                        type="button"
+                        onClick={() => {
+                          setQuestionCount(count);
+                          playSound('correct');
+                        }}
                         className={cn(
-                          "text-left p-2.5 rounded-lg text-xs font-semibold border transition-all",
-                          subject === s.title 
-                            ? "bg-faso-blue/10 text-faso-blue border-faso-blue/30" 
-                            : "bg-gray-50 dark:bg-gray-950 hover:bg-gray-100 border-transparent text-gray-700 dark:text-gray-300"
+                          "py-3 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer text-center",
+                          questionCount === count 
+                            ? "bg-faso-green text-white border-faso-green shadow-sm shadow-faso-green/15 font-black" 
+                            : "bg-gray-50 dark:bg-gray-950 hover:bg-white dark:hover:bg-gray-900 text-slate-700 dark:text-gray-350 border-gray-200 dark:border-gray-800"
                         )}
                       >
-                        <span className="text-[10px] font-bold text-faso-green block uppercase tracking-wider mb-0.5">{s.category}</span>
-                        {s.title}
+                        {count} QCMs
                       </button>
                     ))}
                   </div>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Niveau d'exigence</label>
-                  <select
-                    value={level}
-                    onChange={(e) => setLevel(e.target.value as Level)}
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-950 border dark:border-gray-800 rounded-xl outline-none text-xs dark:text-white"
-                  >
-                    <option value="Premier cycle">Premier cycle</option>
-                    <option value="Licence">Licence</option>
-                    <option value="Master">Master</option>
-                  </select>
-                </div>
-                
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Durée de réflexion</label>
-                  <select
-                    value={timeLimit}
-                    onChange={(e) => setTimeLimit(Number(e.target.value))}
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-950 border dark:border-gray-800 rounded-xl outline-none text-xs dark:text-white"
-                  >
-                    <option value={15}>15 s (Blitz)</option>
-                    <option value={30}>30 s (Rapide)</option>
-                    <option value={45}>45 s (Standard)</option>
-                    <option value={60}>60 s (Équilibré)</option>
-                    <option value={90}>90 s (Théorique)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-gray-400 uppercase">Nombre total de QCMs</label>
-                  <span className="text-xs font-black bg-faso-green/10 text-faso-green px-2.5 py-0.5 rounded-full">
-                    {questionCount} questions
-                  </span>
-                </div>
-                
-                {/* Presets */}
-                <div className="flex gap-2">
-                  {[10, 20, 40, 60].map((count) => (
-                    <button
-                      key={count}
-                      type="button"
-                      onClick={() => setQuestionCount(count)}
-                      className={cn(
-                        "flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer",
-                        questionCount === count 
-                          ? "bg-faso-green text-white border-faso-green shadow-xs" 
-                          : "bg-gray-50 dark:bg-gray-950 hover:bg-gray-100 dark:hover:bg-gray-900 text-gray-600 dark:text-gray-400 border-gray-100 dark:border-gray-800"
-                      )}
-                    >
-                      {count} QCMs
-                    </button>
-                  ))}
-                </div>
-
-                {/* Slider bar for custom selection */}
-                <div className="bg-gray-50 dark:bg-gray-950/60 p-3 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-2">
-                  <div className="flex justify-between text-[10px] text-gray-400 font-bold">
-                    <span>MIN: 5</span>
-                    <span>MOYEN: 30</span>
-                    <span>MAX: 60</span>
+                  {/* Range Slider for custom selection */}
+                  <div className="bg-gray-50 dark:bg-gray-955 p-4 rounded-2xl border border-gray-150 dark:border-gray-850 space-y-3">
+                    <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 font-bold">
+                      <span>MIN: 5 questions</span>
+                      <span>MOYEN: 30 questions</span>
+                      <span>MAX: 60 questions</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="5"
+                      max="60"
+                      step="1"
+                      value={questionCount}
+                      onChange={(e) => setQuestionCount(Number(e.target.value))}
+                      className="w-full accent-faso-green h-2 bg-gray-200 dark:bg-gray-805 rounded-lg cursor-pointer"
+                    />
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center leading-normal italic pl-4 pr-4">
+                      En déplaçant le curseur, vous modulez fidèlement l'amplitude d’évaluation du QCM par l'IA.
+                    </p>
                   </div>
-                  <input
-                    type="range"
-                    min="5"
-                    max="60"
-                    step="1"
-                    value={questionCount}
-                    onChange={(e) => setQuestionCount(Number(e.target.value))}
-                    className="w-full accent-faso-green h-1.5 bg-gray-200 dark:bg-gray-800 rounded-lg cursor-pointer"
-                  />
-                  <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center italic">
-                    Glissez pour ajuster précisément le volume de l'épreuve. Plus le nombre est élevé, plus l'analyse globale est exhaustive.
-                  </p>
                 </div>
-              </div>
-            </div>
 
-            {/* Invited candidates & AI competitors Column */}
-            <div className="space-y-4 bg-gray-50 dark:bg-gray-950/40 p-5 rounded-3xl border border-gray-100 dark:border-gray-800">
-              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
-                <Users size={18} className="text-faso-green" />
-                2. Candidats en présence
+              </div>
+
+            {/* CARD 2: ADVERSAIRES ET CANDIDATS */}
+            <div className="bg-white/95 dark:bg-gray-900/95 border border-slate-150/45 dark:border-gray-850 rounded-3xl p-6 sm:p-8 space-y-6 shadow-[0_12px_44px_rgba(0,181,226,0.03)] relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-faso-green" />
+
+              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2.5 pb-2 border-b border-gray-100 dark:border-gray-850">
+                <span className="p-1.5 bg-faso-green/10 text-faso-green rounded-lg shrink-0"><Users size={16} /></span>
+                2. Présence et nature des participants
               </h3>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-400 uppercase">Adversaires autonomes (IA)</label>
-                <div className="flex items-center justify-between gap-4 p-3 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-xl">
-                  <span className="text-xs font-bold dark:text-white">Ajuster le nombre d'IAs candidates</span>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setAiCount(prev => Math.max(0, prev - 1))}
-                      disabled={aiCount <= 0}
-                      className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white"
-                    >
-                      -
-                    </button>
-                    <span className="font-extrabold text-sm dark:text-white px-2">{aiCount}</span>
-                    <button 
-                      onClick={() => setAiCount(prev => Math.min(10, prev + 1))}
-                      disabled={aiCount >= 10}
-                      className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-                <p className="text-[10px] text-gray-400">
-                  Les cerveaux IA ont des niveaux d'évaluation adaptatifs. Ils calculent en temps réel selon leur coefficient cognitif !
-                </p>
+              {/* Segmented control for arenaType */}
+              <div className="bg-slate-50 dark:bg-gray-955 p-1.5 rounded-2xl grid grid-cols-3 gap-2 border border-slate-100 dark:border-gray-850">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArenaType('solo');
+                    playSound('correct');
+                  }}
+                  className={cn(
+                    "py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex flex-col items-center gap-1 border border-transparent",
+                    arenaType === 'solo'
+                      ? "bg-faso-blue text-white shadow-sm font-black"
+                      : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                  )}
+                >
+                  <User size={15} />
+                  <span>Mode Solo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArenaType('robots');
+                    playSound('correct');
+                  }}
+                  className={cn(
+                    "py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex flex-col items-center gap-1 border border-transparent",
+                    arenaType === 'robots'
+                      ? "bg-faso-green text-white shadow-sm font-black"
+                      : "text-slate-655 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                  )}
+                >
+                  <Sparkles size={15} />
+                  <span>Robots (IA)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArenaType('multiplayer');
+                    playSound('correct');
+                  }}
+                  className={cn(
+                    "py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex flex-col items-center gap-1 border border-transparent",
+                    arenaType === 'multiplayer'
+                      ? "bg-faso-yellow text-gray-900 shadow-sm font-black"
+                      : "text-slate-655 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                  )}
+                >
+                  <Users size={15} />
+                  <span>En Ligne</span>
+                </button>
               </div>
 
+              {arenaType === 'solo' && (
+                <div className="p-4 bg-white dark:bg-gray-900 border dark:border-gray-855 rounded-2xl flex flex-col items-center text-center space-y-2">
+                  <span className="p-3 bg-faso-blue/10 text-faso-blue rounded-full">
+                    <User size={24} />
+                  </span>
+                  <h4 className="font-bold text-xs dark:text-white uppercase tracking-wider">Mode Individuel (Solo)</h4>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-relaxed max-w-xs">
+                    Vous composez cette épreuve seul face au chronomètre. Vos résultats seront stockés dans votre historique pour suivre vos progrès académiques.
+                  </p>
+                </div>
+              )}
+
+              {arenaType === 'robots' && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase">Adversaires autonomes (IA)</label>
+                  <div className="flex items-center justify-between gap-4 p-3 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-xl">
+                    <span className="text-xs font-bold dark:text-white">Ajuster le nombre d'IAs candidates</span>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        type="button"
+                        onClick={() => setAiCount(prev => Math.max(0, prev - 1))}
+                        disabled={aiCount <= 0}
+                        className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <span className="font-extrabold text-sm dark:text-white px-2">{aiCount}</span>
+                      <button 
+                        type="button"
+                        onClick={() => setAiCount(prev => Math.min(10, prev + 1))}
+                        disabled={aiCount >= 10}
+                        className="w-8 h-8 flex items-center justify-center border font-bold rounded-lg disabled:opacity-30 dark:text-white cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    Les cerveaux IA ont des niveaux d'évaluation adaptatifs. Ils calculent en temps réel selon leur coefficient cognitif !
+                  </p>
+                </div>
+              )}
+
               {/* Interactive real-time online list */}
-              <div className="space-y-3 pt-2 border-t dark:border-gray-850">
-                <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse inline-block"></span>
-                  Élèves Réels connectés en direct ({onlineUsers.filter(u => u.email !== profile?.email).length})
-                </label>
+              {arenaType === 'multiplayer' && (<>
+                <div className="space-y-3 pt-2 border-t dark:border-gray-850">
+                  <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse inline-block"></span>
+                    Élèves Réels connectés en direct ({onlineUsers.filter(u => u.email !== profile?.email).length})
+                  </label>
                 
                 {onlineUsers.filter(u => u.email !== profile?.email).length > 0 ? (
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -1551,10 +1735,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                   </p>
                 ) : null}
               </div>
+              </>)}
 
               {/* Humans dynamic invite list */}
-              <div className="space-y-2 pt-2 border-t dark:border-gray-850">
-                <label className="text-xs font-bold text-gray-400 uppercase">Simuler d'autres candidats (Robots)</label>
+              {arenaType === 'robots' && (
+                <div className="space-y-2 pt-2 border-t dark:border-gray-850">
+                  <label className="text-xs font-bold text-gray-400 uppercase">Simuler d'autres candidats (Robots)</label>
                 <div className="flex gap-2 font-sans">
                   <input
                     type="text"
@@ -1591,11 +1777,13 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                   </p>
                 )}
               </div>
+              )}
             </div>
           </div>
+        </div>
 
-          <button
-            onClick={handleStartLobby}
+        <button
+          onClick={handleStartLobby}
             className="w-full py-4 bg-faso-blue hover:bg-blue-600 text-white font-black rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-sm"
           >
             <Play size={18} />
