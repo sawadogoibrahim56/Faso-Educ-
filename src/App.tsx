@@ -374,20 +374,7 @@ export default function App() {
 
     async function syncProfileWithBackend() {
       try {
-        const deviceId = getOrGenerateDeviceId();
-        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}?deviceId=${deviceId}`));
-        
-        if (res.status === 403 && isActive) {
-          const errData = await res.json();
-          if (errData.error === 'device_locked') {
-            alert("⚠️ Accès déconnecté : Ce compte candidat est maintenant synchronisé et actif sur un autre appareil mobile.");
-            // Log out user
-            setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
-            localStorage.removeItem('faso_educ_jwt_token');
-            localStorage.removeItem('faso_educ_user_profile');
-            return;
-          }
-        }
+        const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(profile.email)}`));
 
         if (res.ok && isActive) {
           const serverProf = await res.json();
@@ -407,7 +394,7 @@ export default function App() {
         const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...profile, deviceId })
+          body: JSON.stringify(profile)
         });
         if (syncRes.ok && isActive) {
           const syncData = await syncRes.json();
@@ -543,6 +530,16 @@ export default function App() {
     selectedOption: number | null;
   } | null>(null);
   const isFinishingRef = useRef(false);
+  const quizAbortControllerRef = useRef<AbortController | null>(null);
+
+  const cancelQuizGeneration = () => {
+    if (quizAbortControllerRef.current) {
+      quizAbortControllerRef.current.abort();
+      quizAbortControllerRef.current = null;
+    }
+    setIsGenerating(false);
+  };
+
   const [history, setHistory] = useState<QuizResult[]>(() => {
     const saved = localStorage.getItem('faso_educ_history');
     if (!saved) return [];
@@ -651,50 +648,68 @@ export default function App() {
       .filter(Boolean)
       .slice(0, 80); // Augmenté à 80 pour une meilleure diversité sur le long terme
 
-    const questions = await generateQuizQuestions(currentSubjects, {
-      ...settings,
-      questionCount: count,
-      timePerQuestion: timePerQ
-    }, previousQuestions);
+    const controller = new AbortController();
+    quizAbortControllerRef.current = controller;
 
-    if (questions.length > 0) {
-      const quizId = `res-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      isFinishingRef.current = false;
-      
-      // Save to history immediately
-      const initialResult: QuizResult = {
-        id: quizId,
-        subjects: subjects.filter(s => s.trim()),
-        date: new Date().toLocaleDateString('fr-FR'),
-        level: settings.level,
-        score: 0,
-        totalQuestions: questions.length,
-        mode,
-        questions,
-        userAnswers: new Array(questions.length).fill(null)
-      };
-      
-      setHistory(prev => [initialResult, ...prev]);
+    try {
+      const questions = await generateQuizQuestions(currentSubjects, {
+        ...settings,
+        questionCount: count,
+        timePerQuestion: timePerQ
+      }, previousQuestions, controller.signal);
 
-      setCurrentQuiz({
-        id: quizId,
-        questions,
-        mode,
-        settings: { ...settings, questionCount: count, timePerQuestion: timePerQ },
-        subjects: subjects.filter(s => s.trim())
-      });
-      setQuizState({
-        currentIndex: 0,
-        userAnswers: new Array(questions.length).fill(null),
-        timeLeft: timePerQ,
-        isPaused: false,
-        isFinished: false,
-        showFeedback: false,
-        selectedOption: null
-      });
-      setActiveTab(mode);
+      if (questions && questions.length > 0) {
+        const quizId = `res-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        isFinishingRef.current = false;
+        
+        // Save to history immediately
+        const initialResult: QuizResult = {
+          id: quizId,
+          subjects: subjects.filter(s => s.trim()),
+          date: new Date().toLocaleDateString('fr-FR'),
+          level: settings.level,
+          score: 0,
+          totalQuestions: questions.length,
+          mode,
+          questions,
+          userAnswers: new Array(questions.length).fill(null)
+        };
+        
+        setHistory(prev => [initialResult, ...prev]);
+
+        setCurrentQuiz({
+          id: quizId,
+          questions,
+          mode,
+          settings: { ...settings, questionCount: count, timePerQuestion: timePerQ },
+          subjects: subjects.filter(s => s.trim())
+        });
+        setQuizState({
+          currentIndex: 0,
+          userAnswers: new Array(questions.length).fill(null),
+          timeLeft: timePerQ,
+          isPaused: false,
+          isFinished: false,
+          showFeedback: false,
+          selectedOption: null
+        });
+        setActiveTab(mode);
+      } else {
+        alert("Erreur: Impossible de générer des questions pour le moment. Veuillez réessayer.");
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Quiz generation was explicitly cancelled by the user.");
+      } else {
+        console.error("Quiz generation failed:", err);
+        alert(err.message || "Une erreur est survenue lors de la génération du quiz par l'IA. Veuillez réessayer dans un instant.");
+      }
+    } finally {
+      setIsGenerating(false);
+      if (quizAbortControllerRef.current === controller) {
+        quizAbortControllerRef.current = null;
+      }
     }
-    setIsGenerating(false);
   };
 
   // Audio synthesizer helper inside main app interface
@@ -926,10 +941,17 @@ export default function App() {
 
       {isGenerating && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-2xl flex flex-col items-center gap-4 max-w-xs text-center">
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-2xl flex flex-col items-center gap-4 max-w-xs text-center shadow-2xl border dark:border-gray-800">
             <Loader2 className="animate-spin text-faso-blue" size={48} />
             <p className="font-bold text-lg dark:text-white">Génération de votre quiz...</p>
             <p className="text-sm text-gray-500 dark:text-gray-400">L'IA prépare des questions nuancées et pédagogiques.</p>
+            
+            <button
+              onClick={cancelQuizGeneration}
+              className="mt-2 w-full px-4 py-2.5 bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50 text-red-600 dark:text-red-400 font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2 border border-red-200 dark:border-red-900/30"
+            >
+              Annuler et Retour
+            </button>
           </div>
         </div>
       )}
@@ -1574,54 +1596,73 @@ export default function App() {
       .flatMap(h => h.questions.map(q => q.text))
       .slice(0, 50);
 
-    const questions = await generateQuizQuestions(
-      [course.title, ...course.chapters.map(c => c.title)],
-      {
-        level: course.level,
-        difficulty: 'Moyen',
-        questionCount: 8,
-        timePerQuestion: 120,
-        soundEnabled: settings.soundEnabled,
-      },
-      previousQuestions
-    );
+    const controller = new AbortController();
+    quizAbortControllerRef.current = controller;
 
-    if (questions.length > 0) {
-      const quizId = `res-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      isFinishingRef.current = false;
-      
-      const initialResult: QuizResult = {
-        id: quizId,
-        subjects: [course.title],
-        date: new Date().toLocaleDateString('fr-FR'),
-        level: course.level,
-        score: 0,
-        totalQuestions: questions.length,
-        mode: 'Entraînement',
-        questions,
-        userAnswers: new Array(questions.length).fill(null)
-      };
-      
-      setHistory(prev => [initialResult, ...prev]);
-      setCurrentQuiz({
-        id: quizId,
-        questions,
-        mode: 'Entraînement',
-        settings: { ...settings, questionCount: questions.length, timePerQuestion: 120 },
-        subjects: [course.title]
-      });
-      setQuizState({
-        currentIndex: 0,
-        userAnswers: new Array(questions.length).fill(null),
-        timeLeft: 120,
-        isPaused: false,
-        isFinished: false,
-        showFeedback: false,
-        selectedOption: null
-      });
-      setActiveTab('Entraînement');
+    try {
+      const questions = await generateQuizQuestions(
+        [course.title, ...course.chapters.map(c => c.title)],
+        {
+          level: course.level,
+          difficulty: 'Moyen',
+          questionCount: 8,
+          timePerQuestion: 120,
+          soundEnabled: settings.soundEnabled,
+        },
+        previousQuestions,
+        controller.signal
+      );
+
+      if (questions && questions.length > 0) {
+        const quizId = `res-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        isFinishingRef.current = false;
+        
+        const initialResult: QuizResult = {
+          id: quizId,
+          subjects: [course.title],
+          date: new Date().toLocaleDateString('fr-FR'),
+          level: course.level,
+          score: 0,
+          totalQuestions: questions.length,
+          mode: 'Entraînement',
+          questions,
+          userAnswers: new Array(questions.length).fill(null)
+        };
+        
+        setHistory(prev => [initialResult, ...prev]);
+        setCurrentQuiz({
+          id: quizId,
+          questions,
+          mode: 'Entraînement',
+          settings: { ...settings, questionCount: questions.length, timePerQuestion: 120 },
+          subjects: [course.title]
+        });
+        setQuizState({
+          currentIndex: 0,
+          userAnswers: new Array(questions.length).fill(null),
+          timeLeft: 120,
+          isPaused: false,
+          isFinished: false,
+          showFeedback: false,
+          selectedOption: null
+        });
+        setActiveTab('Entraînement');
+      } else {
+        alert("Erreur: Impossible de générer des questions pour ce cours. Veuillez réessayer.");
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Course quiz generation was cancelled.");
+      } else {
+        console.error("Course quiz generation failed:", err);
+        alert(err.message || "Une erreur est survenue lors de la génération automatique des questions du cours par l'IA.");
+      }
+    } finally {
+      setIsGenerating(false);
+      if (quizAbortControllerRef.current === controller) {
+        quizAbortControllerRef.current = null;
+      }
     }
-    setIsGenerating(false);
   };
 
   const renderCourses = () => {
@@ -2586,7 +2627,6 @@ export default function App() {
       console.warn("Offline check during registration:", err);
     }
 
-    const deviceId = getOrGenerateDeviceId();
     const newProfile: UserProfile = {
       registered: true,
       name: regName.trim(),
@@ -2600,8 +2640,7 @@ export default function App() {
       learningStreak: 1,
       points: 100,
       targetExam: 'Inspecteur des Douanes',
-      regionName: 'Centre (Ouagadougou)',
-      boundDeviceId: deviceId
+      regionName: 'Centre (Ouagadougou)'
     };
 
     // Synchronously force save registration to backend local DB to guarantee persistency
@@ -2609,7 +2648,7 @@ export default function App() {
       const syncRes = await fetch(getApiUrl('/api/profiles/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newProfile, deviceId })
+        body: JSON.stringify(newProfile)
       });
       if (syncRes.ok) {
         const syncData = await syncRes.json();
@@ -2633,21 +2672,8 @@ export default function App() {
     setLockedEmail('');
     setTransferStatusMsg(null);
 
-    const deviceId = getOrGenerateDeviceId();
-
     try {
-      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}?deviceId=${deviceId}`));
-      
-      if (res.status === 403) {
-        const errData = await res.json();
-        if (errData.error === 'device_locked') {
-          setAuthError(errData.message);
-          setIsDeviceLocked(true);
-          setLockedEmail(regEmail.trim().toLowerCase());
-          playSound('wrong');
-          return;
-        }
-      }
+      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(regEmail.trim().toLowerCase())}`));
 
       if (res.ok) {
         const existingProf = await res.json();
@@ -2667,8 +2693,7 @@ export default function App() {
               points: existingProf.points || 120,
               targetExam: existingProf.targetExam || 'Concours Direct',
               regionName: existingProf.regionName || 'Centre (Ouagadougou)',
-              password: serverPass,
-              boundDeviceId: existingProf.boundDeviceId || deviceId
+              password: serverPass
             });
             playSound('finish');
             return;
@@ -3791,15 +3816,15 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2 pt-1">
                       <div className="flex justify-between items-center p-2 rounded-lg bg-orange-500/10 border border-orange-500/30">
                         <span className="font-bold text-orange-400">Orange Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.orange?.num || "+226 76 00 11 22"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.orange?.num || "+226 56 85 32 47"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
                         <span className="font-bold text-indigo-400">Moov Money :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.moov?.num || "+226 60 44 55 66"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.moov?.num || "+226 56 85 32 47"}</code>
                       </div>
                       <div className="flex justify-between items-center p-2 rounded-lg bg-sky-500/10 border border-sky-500/30">
                         <span className="font-bold text-sky-400">Wave Cash :</span>
-                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.wave?.num || "+226 55 88 99 00"}</code>
+                        <code className="bg-slate-950 px-2 py-0.5 rounded font-bold text-white tracking-wider">{paymentCredentials?.wave?.num || "+226 56 85 32 47"}</code>
                       </div>
                     </div>
                     <p className="text-[10px] text-gray-400 italic mt-1.5">
@@ -5506,14 +5531,14 @@ export default function App() {
                   <div className="p-3 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-orange-400 block">Orange Money</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Ibrahim Sawadogo"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.orange?.name || "Sawadogo IBRAHIM"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.orange?.num || "+226 76 00 11 22"}
+                        {paymentCredentials?.orange?.num || "+226 56 85 32 47"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.orange?.num || "76001122").replace(/\D/g, ''), 'orange')}
+                      onClick={() => handleCopyText((paymentCredentials?.orange?.num || "56853247").replace(/\D/g, ''), 'orange')}
                       className="mt-3.5 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'orange' ? "Copié ✓" : (
@@ -5529,14 +5554,14 @@ export default function App() {
                   <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Moov Money</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Ibrahim Sawadogo"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.moov?.name || "Sawadogo IBRAHIM"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.moov?.num || "+226 60 44 55 66"}
+                        {paymentCredentials?.moov?.num || "+226 56 85 32 47"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.moov?.num || "60445566").replace(/\D/g, ''), 'moov')}
+                      onClick={() => handleCopyText((paymentCredentials?.moov?.num || "56853247").replace(/\D/g, ''), 'moov')}
                       className="mt-3.5 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'moov' ? "Copié ✓" : (
@@ -5552,14 +5577,14 @@ export default function App() {
                   <div className="p-3 bg-sky-500/5 dark:bg-sky-500/10 border border-sky-500/20 rounded-xl flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 block">Wave Transfer</span>
-                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Ibrahim Sawadogo"}</span>
+                      <span className="text-[9px] text-gray-500 font-medium block">Nom: {paymentCredentials?.wave?.name || "Sawadogo IBRAHIM"}</span>
                       <code className="bg-white dark:bg-black/40 border dark:border-transparent px-2 py-1 rounded-md text-xs font-mono font-black text-gray-800 dark:text-white tracking-widest block mt-2 text-center">
-                        {paymentCredentials?.wave?.num || "+226 55 88 99 00"}
+                        {paymentCredentials?.wave?.num || "+226 56 85 32 47"}
                       </code>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleCopyText((paymentCredentials?.wave?.num || "55889900").replace(/\D/g, ''), 'wave')}
+                      onClick={() => handleCopyText((paymentCredentials?.wave?.num || "56853247").replace(/\D/g, ''), 'wave')}
                       className="mt-3.5 py-1.5 px-3 bg-sky-500 hover:bg-sky-600 text-white font-bold text-[10px] rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs self-stretch"
                     >
                       {copiedText === 'wave' ? "Copié ✓" : (

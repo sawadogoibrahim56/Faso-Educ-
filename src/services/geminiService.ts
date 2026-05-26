@@ -4,7 +4,8 @@ import { getApiUrl } from "../lib/api";
 export async function generateQuizQuestions(
   subjects: string[],
   settings: QuizSettings,
-  excludeQuestions: string[] = []
+  excludeQuestions: string[] = [],
+  signal?: AbortSignal
 ): Promise<Question[]> {
   try {
     const response = await fetch(getApiUrl("/api/gemini/quiz"), {
@@ -16,11 +17,21 @@ export async function generateQuizQuestions(
         subjects,
         settings,
         excludeQuestions
-      })
+      }),
+      signal
     });
     
     if (!response.ok) {
-      throw new Error(`Erreur lors de la génération de quiz (${response.status})`);
+      let errorMessage = `Erreur lors de la génération de quiz (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.message) {
+          errorMessage = errJson.message;
+        }
+      } catch (e) {
+        // Silently ignore parsing failure
+      }
+      throw new Error(errorMessage);
     }
     
     return await response.json();
