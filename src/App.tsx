@@ -1217,6 +1217,34 @@ export default function App() {
               )} />
             </button>
           </section>
+
+          <section className="space-y-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+            <label className="font-bold dark:text-white block">🎨 Thème d'arrière-plan</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'slate', name: 'Ardoise Standard', color: 'bg-slate-500' },
+                { id: 'green', name: 'Vert Faso', color: 'bg-emerald-600' },
+                { id: 'blue', name: 'Bleu Clarté', color: 'bg-sky-400' }
+              ].map((theme) => (
+                <button
+                  key={theme.id}
+                  onClick={() => {
+                    setSettings({ ...settings, bgTheme: theme.id as 'slate' | 'green' | 'blue' });
+                    playSound('correct');
+                  }}
+                  className={cn(
+                    "p-3 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5 cursor-pointer text-center",
+                    (settings.bgTheme || 'slate') === theme.id 
+                      ? "border-faso-blue bg-blue-50/50 dark:bg-blue-900/10 text-faso-blue" 
+                      : "border-gray-200 dark:border-gray-700 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-750"
+                  )}
+                >
+                  <span className={cn("w-5 h-5 rounded-full shadow-sm", theme.color)} />
+                  <span className="text-[10px] font-bold block">{theme.name}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
 
         <div className="pt-6 space-y-3">
@@ -7167,7 +7195,14 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 flex flex-col transition-colors duration-300">
+    <div className={cn(
+      "min-h-screen font-sans text-gray-900 dark:text-gray-100 flex flex-col transition-colors duration-300",
+      settings.bgTheme === 'green' 
+        ? "bg-gradient-to-tr from-emerald-100/15 via-white to-emerald-50/20 dark:from-emerald-950/20 dark:via-gray-950 dark:to-neutral-950 bg-fixed" 
+        : settings.bgTheme === 'blue' 
+          ? "bg-gradient-to-tr from-sky-100/15 via-white to-sky-50/20 dark:from-sky-950/25 dark:via-gray-950 dark:to-neutral-950 bg-fixed" 
+          : "bg-gray-50/50 dark:bg-gray-950"
+    )}>
       {/* Premium Transparent Glass Header */}
       <header className="glass-panel border-b border-gray-200/50 dark:border-gray-800/50 p-4 flex items-center justify-between sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-3">

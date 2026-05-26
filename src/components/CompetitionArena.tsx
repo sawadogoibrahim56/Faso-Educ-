@@ -725,15 +725,15 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     return () => clearTimeout(timer);
   }, [stage, isPaused, showFeedback, timeLeft, currentQuestionIndex]);
 
-  // Synchronized automatic reveal when all participants have answered
+  // Synchronized automatic reveal when all participants have answered (Only in solo mode, challenge is fully timed)
   useEffect(() => {
     if (stage !== 'active' || showFeedback || isPaused || participants.length === 0) return;
 
     const allAnswered = participants.every(p => p.status === 'answered');
-    if (allAnswered) {
+    if (allAnswered && arenaType === 'solo') {
       handleRevealAnswers();
     }
-  }, [participants, stage, showFeedback, isPaused]);
+  }, [participants, stage, showFeedback, isPaused, arenaType]);
 
   // Automatic feedback transition to next question after 8 seconds
   useEffect(() => {

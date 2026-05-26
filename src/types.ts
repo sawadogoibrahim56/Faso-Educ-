@@ -20,6 +20,7 @@ export interface QuizSettings {
   aiCompetition?: boolean;
   aiDifficulty?: Difficulty;
   darkMode?: boolean;
+  bgTheme?: 'slate' | 'green' | 'blue';
 }
 
 export interface QuizResult {
