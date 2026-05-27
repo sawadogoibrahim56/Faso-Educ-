@@ -690,16 +690,9 @@ app.post("/api/profiles/sync", async (req, res) => {
         avatar: profile.avatar || "👨‍🎓",
         is_premium: isPremiumStatus,
         points: profile.points || 0,
-        learning_streak: profile.learningStreak || 0
+        learning_streak: profile.learningStreak || 0,
+        password: profile.password || "123456"
       };
-
-      // Safely include device binding columns, matching standard database profiles schema
-      if (typeof profile.boundDeviceId !== "undefined") {
-        safeData.bound_device_id = profile.boundDeviceId;
-      }
-      if (typeof profile.transferRequested !== "undefined") {
-        safeData.transfer_requested = !!profile.transferRequested;
-      }
 
       // Perform standard columns upsert first (guaranteed to succeed on standard schema layout)
       const { error: baseError } = await supabaseAdmin.from("profiles").upsert(safeData, { onConflict: "email" });
@@ -714,6 +707,13 @@ app.post("/api/profiles/sync", async (req, res) => {
         if (profile.lastName) extraData.last_name = profile.lastName;
         if (profile.password) extraData.password = profile.password;
 
+        if (typeof profile.boundDeviceId !== "undefined") {
+          extraData.bound_device_id = profile.boundDeviceId;
+        }
+        if (typeof profile.transferRequested !== "undefined") {
+          extraData.transfer_requested = !!profile.transferRequested;
+        }
+
         if (Object.keys(extraData).length > 0) {
           try {
             // Quietly update extra attributes without triggering database-wide error traces or noisy warning banners
@@ -724,7 +724,7 @@ app.post("/api/profiles/sync", async (req, res) => {
             
             if (extraError) {
               // Handle missing columns with low logger priority
-              console.info("💡 Note: Schema lacks some custom columns (first_name, last_name, phone, or password) in Supabase. Profiles are dynamically fully preserved with all attributes in the high-performance local database cache.");
+              console.info("💡 Note: Schema lacks some custom columns (first_name, last_name, phone, password, bound_device_id, or transfer_requested) in Supabase. Profiles are dynamically fully preserved with all attributes in the high-performance local database cache.");
             }
           } catch (extraErr: any) {
             // Quiet catch
@@ -1802,7 +1802,13 @@ app.post("/api/auth/token-sync", async (req, res) => {
           isPremium: data.is_premium,
           points: data.points,
           learningStreak: data.learning_streak,
-          registered: true
+          registered: true,
+          password: data.password || "123456",
+          phone: data.phone || "",
+          firstName: data.first_name || "",
+          lastName: data.last_name || "",
+          boundDeviceId: data.bound_device_id || null,
+          transferRequested: !!data.transfer_requested
         };
       }
     } catch (e) {

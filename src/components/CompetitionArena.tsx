@@ -26,7 +26,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { Question, Level, QuizSettings } from '../types';
+import { Question, Level, QuizSettings, Difficulty } from '../types';
 import { generateQuizQuestions } from '../services/geminiService';
 import { MathRenderer } from './MathRenderer';
 import { jsPDF } from 'jspdf';
@@ -130,9 +130,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Settings
   const [subject, setSubject] = useState<string>("Microéconomie Moderne (Cobb-Douglas & Cournot)");
   const [level, setLevel] = useState<Level>("Licence");
+  const [difficulty, setDifficulty] = useState<Difficulty>("Moyen");
   const [questionCount, setQuestionCount] = useState<number>(8);
   const [timeLimit, setTimeLimit] = useState<number>(45); // seconds per question
   const [aiCount, setAiCount] = useState<number>(5);
+  const [aiCompetition, setAiCompetition] = useState<boolean>(true);
+  const [aiDifficulty, setAiDifficulty] = useState<Difficulty>("Moyen");
   const [soundEnabled, setSoundEnabled] = useState<boolean>(initialSoundEnabled);
   
   // Human inviting
@@ -514,13 +517,26 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       // Remove to prevent exact duplicates in list
       SIMULATED_NAMES.splice(idx, 1);
       
+      let accuracy = 0.55 + Math.random() * 0.25; // Default Moyen: 55% - 80%
+      let speed = 6 + Math.random() * 10;        // Default Moyen: 6s - 16s
+      
+      if (aiDifficulty === 'Facile') {
+        accuracy = 0.35 + Math.random() * 0.25;  // Facile: 35% - 60%
+        speed = 10 + Math.random() * 12;         // Facile: 10s - 22s (slower)
+      } else if (aiDifficulty === 'Expert') {
+        accuracy = 0.75 + Math.random() * 0.22;  // Expert: 75% - 97%
+        speed = 3 + Math.random() * 5;           // Expert: 3s - 8s (faster)
+      }
+      
+      accuracy = Math.min(1.0, Math.max(0.1, accuracy));
+      
       aiParts.push({
         id: `ai-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         name,
         isAI: true,
         score: 0,
-        accuracy: 0.5 + Math.random() * 0.35, // 50% to 85% accuracy
-        speed: 5 + Math.random() * 15,         // average seconds taken 5-20s
+        accuracy,
+        speed,
         status: 'waiting'
       });
     }
@@ -637,10 +653,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     try {
       const qSettings: QuizSettings = {
         level,
-        difficulty: 'Moyen',
+        difficulty,
         questionCount,
         timePerQuestion: timeLimit,
-        soundEnabled: soundEnabled
+        soundEnabled: soundEnabled,
+        aiCompetition,
+        aiDifficulty
       };
       
       const generated = await generateQuizQuestions([subject], qSettings);
@@ -1411,9 +1429,9 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                   
                   {/* Visual buttons for Level */}
                   <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest block pl-1">🎚️ Niveau d'exigence académique</label>
-                    <div className="grid grid-cols-3 gap-1.5 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
-                      {(['Premier cycle', 'Licence', 'Master'] as Level[]).map((l) => (
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">🎚️ Niveau d'exigence académique</label>
+                    <div className="grid grid-cols-4 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
+                      {(['Premier cycle', 'Licence', 'Master', 'Doctorat'] as Level[]).map((l) => (
                         <button
                           key={l}
                           type="button"
@@ -1422,7 +1440,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                             playSound('correct');
                           }}
                           className={cn(
-                            "py-2.5 px-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer text-center truncate",
+                            "py-2 px-1 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer text-center truncate",
                             level === l
                               ? "bg-faso-blue text-white shadow-xs font-black"
                               : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
@@ -1434,10 +1452,39 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     </div>
                   </div>
 
+                  {/* Visual buttons for Difficulty */}
+                  <div className="space-y-2 text-left">
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⚡ Difficulté de l'épreuve</label>
+                    <div className="grid grid-cols-3 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
+                      {(['Facile', 'Moyen', 'Expert'] as Difficulty[]).map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            setDifficulty(d);
+                            playSound('correct');
+                          }}
+                          className={cn(
+                            "py-2 px-1 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer text-center truncate",
+                            difficulty === d
+                              ? "bg-faso-blue text-white shadow-xs font-black"
+                              : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
                   {/* Visual buttons for reflection timer duration per QCM */}
                   <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest block pl-1">⏱️ Durée de réflexion / QCM</label>
-                    <div className="grid grid-cols-5 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⏱️ Durée de réflexion / QCM</label>
+                    <div className="grid grid-cols-5 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-xl border border-gray-150 dark:border-gray-850">
                       {([15, 30, 45, 60, 90] as number[]).map((seconds) => (
                         <button
                           key={seconds}
@@ -1447,7 +1494,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                             playSound('correct');
                           }}
                           className={cn(
-                            "py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer text-center",
+                            "py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer text-center",
                             timeLimit === seconds
                               ? "bg-faso-green text-white shadow-xs font-black"
                               : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
@@ -1457,9 +1504,65 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                         </button>
                       ))}
                     </div>
-                    <span className="text-[9px] text-gray-450 dark:text-gray-500 block text-right mt-1 italic">
+                    <span className="text-[9px] text-gray-450 dark:text-gray-500 block text-right mt-1 italic font-semibold">
                       {timeLimit === 15 ? "Format Blitz : très rythmé" : timeLimit === 90 ? "Format Théorique : propice aux calculs" : "Format Standard équilibré"}
                     </span>
+                  </div>
+
+                  {/* Section: Compétition contre l'IA */}
+                  <div className="p-3 bg-gray-50 dark:bg-gray-955 space-y-2 rounded-2xl border border-gray-150 dark:border-gray-850 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-slate-450 dark:text-gray-405 uppercase tracking-widest">🤖 Compétition contre l'IA</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const val = !aiCompetition;
+                          setAiCompetition(val);
+                          // Automatically toggle arenaType to robots if enabled, or back to solo
+                          if (val) {
+                            setArenaType('robots');
+                          } else {
+                            setArenaType('solo');
+                          }
+                          playSound('correct');
+                        }}
+                        className={cn(
+                          "w-10 h-5.5 rounded-full transition-all relative cursor-pointer",
+                          aiCompetition ? "bg-faso-green" : "bg-gray-300"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.75 w-4 h-4 bg-white rounded-full transition-all",
+                          aiCompetition ? "left-5" : "left-1"
+                        )} />
+                      </button>
+                    </div>
+
+                    {aiCompetition && (
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-extrabold text-gray-450 dark:text-gray-400 uppercase tracking-widest block">Intelligence de l'IA</span>
+                        <div className="grid grid-cols-3 gap-1 bg-white dark:bg-gray-900 p-0.5 rounded-lg border border-gray-200/50 dark:border-gray-800">
+                          {(['Facile', 'Moyen', 'Expert'] as Difficulty[]).map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => {
+                                setAiDifficulty(d);
+                                playSound('correct');
+                              }}
+                              className={cn(
+                                "py-1 rounded-md text-[10px] font-extrabold transition-all cursor-pointer text-center",
+                                aiDifficulty === d
+                                  ? "bg-faso-green text-white font-black"
+                                  : "text-slate-650 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
+                              )}
+                            >
+                              {d}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                 </div>

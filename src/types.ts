@@ -21,6 +21,7 @@ export interface QuizSettings {
   aiDifficulty?: Difficulty;
   darkMode?: boolean;
   bgTheme?: 'slate' | 'green' | 'blue';
+  fontSize?: 'normal' | 'large' | 'xlarge';
 }
 
 export interface QuizResult {

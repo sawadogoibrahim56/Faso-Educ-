@@ -142,11 +142,21 @@ export default function App() {
           return {
             registered: !!parsed.registered,
             name: parsed.name || '',
+            firstName: parsed.firstName || '',
+            lastName: parsed.lastName || '',
             email: parsed.email || '',
+            phone: parsed.phone || '',
             level: parsed.level || 'Licence',
             registrationDate: parsed.registrationDate || new Date().toISOString(),
             isPremium: !!parsed.isPremium,
             simulatedTimeShiftDays: parsed.simulatedTimeShiftDays || 0,
+            avatar: parsed.avatar || '👨‍🎓',
+            points: parsed.points || 0,
+            learningStreak: parsed.learningStreak || 0,
+            targetExam: parsed.targetExam || '',
+            regionName: parsed.regionName || '',
+            password: parsed.password || '',
+            boundDeviceId: parsed.boundDeviceId || undefined
           };
         }
       } catch (e) {
@@ -574,15 +584,18 @@ export default function App() {
   const [subjects, setSubjects] = useState<string[]>(['']);
   const [settings, setSettings] = useState<QuizSettings>(() => {
     const saved = localStorage.getItem('faso_educ_settings');
-    return saved ? JSON.parse(saved) : {
-      level: 'Licence',
-      difficulty: 'Moyen',
-      questionCount: 50,
-      timePerQuestion: 119,
-      soundEnabled: true,
-      aiCompetition: false,
-      aiDifficulty: 'Moyen',
-      darkMode: false
+    const base = saved ? JSON.parse(saved) : {};
+    return {
+      level: base.level || 'Licence',
+      difficulty: base.difficulty || 'Moyen',
+      questionCount: base.questionCount || 50,
+      timePerQuestion: base.timePerQuestion || 119,
+      soundEnabled: typeof base.soundEnabled !== 'undefined' ? base.soundEnabled : true,
+      aiCompetition: typeof base.aiCompetition !== 'undefined' ? base.aiCompetition : false,
+      aiDifficulty: base.aiDifficulty || 'Moyen',
+      darkMode: typeof base.darkMode !== 'undefined' ? base.darkMode : false,
+      bgTheme: base.bgTheme || 'slate',
+      fontSize: base.fontSize || 'normal'
     };
   });
 
@@ -1074,112 +1087,13 @@ export default function App() {
     <div className="fixed inset-0 bg-white dark:bg-gray-950 z-50 overflow-y-auto">
       <div className="p-6 max-w-2xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold dark:text-white">Paramètres</h2>
+          <h2 className="text-2xl font-bold dark:text-white">Paramètres Généraux</h2>
           <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full dark:text-gray-400">
             <X size={24} />
           </button>
         </div>
 
         <div className="space-y-6">
-          <section className="space-y-3">
-            <label className="font-bold dark:text-gray-200">Niveau d'études</label>
-            <div className="grid grid-cols-2 gap-2">
-              {['Premier cycle', 'Licence', 'Master', 'Doctorat'].map((lvl) => (
-                <button
-                  key={lvl}
-                  onClick={() => setSettings({ ...settings, level: lvl as Level })}
-                  className={cn(
-                    "p-3 rounded-xl border-2 transition-all",
-                    settings.level === lvl ? "border-faso-blue bg-blue-50 dark:bg-blue-900/20 text-faso-blue" : "border-gray-200 dark:border-gray-800 dark:text-gray-400"
-                  )}
-                >
-                  {lvl}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <label className="font-bold dark:text-gray-200">Difficulté</label>
-            <div className="flex gap-2">
-              {['Facile', 'Moyen', 'Expert'].map((diff) => (
-                <button
-                  key={diff}
-                  onClick={() => setSettings({ ...settings, difficulty: diff as Difficulty })}
-                  className={cn(
-                    "flex-1 p-3 rounded-xl border-2 transition-all",
-                    settings.difficulty === diff ? "border-faso-blue bg-blue-50 dark:bg-blue-900/20 text-faso-blue" : "border-gray-200 dark:border-gray-800 dark:text-gray-400"
-                  )}
-                >
-                  {diff}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <div className="flex justify-between">
-              <label className="font-bold dark:text-gray-200">Nombre de questions</label>
-              <span className="text-faso-blue font-bold">{settings.questionCount}</span>
-            </div>
-            <input
-              type="range"
-              min="5"
-              max="100"
-              value={settings.questionCount}
-              onChange={(e) => setSettings({ ...settings, questionCount: parseInt(e.target.value) })}
-              className="w-full h-2 bg-gray-200 dark:bg-gray-800 rounded-lg appearance-none cursor-pointer accent-faso-blue"
-            />
-          </section>
-
-          <section className="flex flex-col p-4 bg-gray-50 dark:bg-gray-800 rounded-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Users className="text-faso-green" />
-                <span className="font-bold dark:text-white">Compétition contre l'IA</span>
-              </div>
-              <button
-                onClick={() => setSettings({ ...settings, aiCompetition: !settings.aiCompetition })}
-                className={cn(
-                  "w-12 h-6 rounded-full transition-all relative",
-                  settings.aiCompetition ? "bg-faso-green" : "bg-gray-300"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                  settings.aiCompetition ? "left-7" : "left-1"
-                )} />
-              </button>
-            </div>
-            
-            {settings.aiCompetition && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-700"
-              >
-                <label className="text-sm font-bold text-gray-600 dark:text-gray-400">Difficulté de l'IA</label>
-                <div className="flex gap-2">
-                  {['Facile', 'Moyen', 'Expert'].map((diff) => (
-                    <button
-                      key={diff}
-                      onClick={() => setSettings({ ...settings, aiDifficulty: diff as Difficulty })}
-                      className={cn(
-                        "flex-1 p-2 rounded-lg border-2 text-sm transition-all",
-                        settings.aiDifficulty === diff ? "border-faso-green bg-green-50 dark:bg-green-900/20 text-faso-green" : "border-gray-200 dark:border-gray-700 dark:text-gray-400"
-                      )}
-                    >
-                      {diff}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-gray-500 italic">
-                  L'IA sera plus rapide et plus précise en mode Expert.
-                </p>
-              </motion.div>
-            )}
-          </section>
-
           <section className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
             <div className="flex items-center gap-3">
               {settings.darkMode ? <Moon className="text-faso-blue" /> : <Sun className="text-faso-yellow" />}
@@ -1241,6 +1155,37 @@ export default function App() {
                 >
                   <span className={cn("w-5 h-5 rounded-full shadow-sm", theme.color)} />
                   <span className="text-[10px] font-bold block">{theme.name}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+            <label className="font-bold dark:text-white block">🔎 Taille de police (Lecture)</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'normal', name: 'Standard Aa', desc: 'Lecture par défaut' },
+                { id: 'large', name: 'Grande Aa+', desc: 'Plus confortable' },
+                { id: 'xlarge', name: 'Maximisée Aa++', desc: 'Lecture très facile' }
+              ].map((sz) => (
+                <button
+                  key={sz.id}
+                  onClick={() => {
+                    setSettings({ ...settings, fontSize: sz.id as 'normal' | 'large' | 'xlarge' });
+                    playSound('correct');
+                  }}
+                  className={cn(
+                    "p-3 rounded-xl border-2 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer text-center",
+                    (settings.fontSize || 'normal') === sz.id 
+                      ? "border-faso-blue bg-blue-50/50 dark:bg-blue-900/10 text-faso-blue" 
+                      : "border-gray-200 dark:border-gray-700 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-750"
+                  )}
+                >
+                  <span className={cn(
+                    "font-extrabold", 
+                    sz.id === 'normal' ? 'text-xs' : sz.id === 'large' ? 'text-sm' : 'text-base'
+                  )}>Aa</span>
+                  <span className="text-xs font-bold block">{sz.name}</span>
                 </button>
               ))}
             </div>
@@ -2720,7 +2665,7 @@ export default function App() {
   const [regLastName, setRegLastName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
-  const [regPassword, setRegPassword] = useState('123456');
+  const [regPassword, setRegPassword] = useState('');
   const [regLevel, setRegLevel] = useState<Level>('Licence');
   const [regSimTime, setRegSimTime] = useState<'normal' | 'expired'>('normal');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -7197,6 +7142,7 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
   return (
     <div className={cn(
       "min-h-screen font-sans text-gray-900 dark:text-gray-100 flex flex-col transition-colors duration-300",
+      settings.fontSize === 'large' ? 'font-size-large' : settings.fontSize === 'xlarge' ? 'font-size-xlarge' : '',
       settings.bgTheme === 'green' 
         ? "bg-gradient-to-tr from-emerald-100/15 via-white to-emerald-50/20 dark:from-emerald-950/20 dark:via-gray-950 dark:to-neutral-950 bg-fixed" 
         : settings.bgTheme === 'blue' 
