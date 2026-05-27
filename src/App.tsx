@@ -2661,6 +2661,7 @@ export default function App() {
   };
 
   const [authMode, setAuthMode] = useState<'register' | 'login' | 'forgot' | 'reset'>('register');
+  const [backupCode, setBackupCode] = useState<string | null>(null);
   const [regFirstName, setRegFirstName] = useState('');
   const [regLastName, setRegLastName] = useState('');
   const [regEmail, setRegEmail] = useState('');
@@ -2890,6 +2891,7 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setRecoverySuccess(data.message);
+        setBackupCode(data.code || null);
         // Switch to reset mode so they can type the OTP code and set password!
         setAuthMode('reset');
         playSound('correct');
@@ -2960,19 +2962,19 @@ export default function App() {
 
   const renderRegistration = () => {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center p-2 xs:p-3 sm:p-6 relative overflow-hidden font-sans">
         <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-faso-green/10 rounded-full filter blur-[100px]" />
         <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-faso-blue/10 rounded-full filter blur-[100px]" />
  
-        <div className="w-full max-w-lg bg-slate-950/80 border border-slate-800 backdrop-blur-xl rounded-2xl p-8 relative z-10 shadow-2xl">
-          <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-br from-faso-green to-faso-blue rounded-2xl flex items-center justify-center shadow-md mx-auto mb-4">
-              <span className="text-white font-black text-3xl">F</span>
+        <div className="w-full max-w-md bg-slate-950/80 border border-slate-800 backdrop-blur-xl rounded-xl sm:rounded-2xl p-4 xs:p-6 sm:p-8 relative z-10 shadow-2xl">
+          <div className="text-center mb-5">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-faso-green to-faso-blue rounded-xl sm:rounded-2xl flex items-center justify-center shadow-md mx-auto mb-3">
+              <span className="text-white font-black text-2xl sm:text-3xl">F</span>
             </div>
-            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent">
               FASO EDUC
             </h1>
-            <p className="text-xs text-gray-400 mt-2 font-medium uppercase tracking-wider">
+            <p className="text-[10px] sm:text-xs text-gray-400 mt-1 font-medium uppercase tracking-wider">
               Portail de Révisions & Concours d'Élite
             </p>
           </div>
@@ -3037,13 +3039,8 @@ export default function App() {
 
           {authMode === 'register' && (
             <>
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-xs text-gray-300 space-y-2 leading-relaxed">
-                <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
-                  ✨ Votre Port d'Inscription Académique
-                </p>
-                <p className="text-start">
-                  Inscrivez-vous avec vos identifiants réels pour bénéficier d'une **période d'essai gratuite de 7 jours**. Connexion simultanée sur 2 téléphones interdite (**Device Binding**).
-                </p>
+              <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 mb-4 text-[10px] sm:text-xs text-center text-gray-300">
+                🎁 Inscription gratuite avec <strong className="text-faso-green font-bold">7 jours d'essai de démonstration offerts</strong> sans aucun engagement.
               </div>
 
               <form onSubmit={handleRegisterSubmit} className="space-y-4 text-start">
@@ -3210,13 +3207,8 @@ export default function App() {
 
           {authMode === 'forgot' && (
             <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 text-start">
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-3 text-xs text-gray-300 space-y-2 leading-relaxed">
-                <p className="font-semibold text-faso-blue flex items-center gap-1 text-sm bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent underline decoration-faso-blue/30 text-start font-black">
-                  🔑 Réparation de l'accès au compte
-                </p>
-                <p className="text-start">
-                  Saisissez l'adresse e-mail de votre compte. Nous vous transmettrons un code secret OTP de 6 chiffres par e-mail afin de définir un nouveau mot de passe.
-                </p>
+              <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 mb-3 text-[10px] sm:text-xs text-center text-gray-300">
+                🔒 Saisissez l'adresse e-mail de votre compte pour recevoir votre code confidentiel de récupération.
               </div>
 
               <div>
@@ -3275,6 +3267,11 @@ export default function App() {
                   onChange={(e) => setRecoveryOtp(e.target.value)}
                   className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white text-center font-mono font-bold tracking-[0.4em] text-faso-blue"
                 />
+                {backupCode && (
+                  <div className="mt-2 p-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-lg text-[10px] leading-relaxed font-semibold">
+                    🔑 <strong>Secours :</strong> Si l'e-mail tarde ou est filtré par votre messagerie, vous pouvez utiliser ce code temporaire généré pour votre compte : <span className="text-amber-300 font-mono text-[11px] font-bold select-all bg-amber-950/40 px-1.5 py-0.5 rounded">{backupCode}</span>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -3335,8 +3332,8 @@ export default function App() {
             </form>
           )}
 
-          <div className="mt-6 text-center text-[10px] text-gray-500 font-medium">
-            En continuant, vous acceptez d'alimenter votre intellect avec notre IA générative d'excellence. Référentiels d'examens officiels du Burkina Faso et de la sous-région UEMOA.
+          <div className="mt-5 text-center text-[10px] text-gray-500 font-bold tracking-wide uppercase">
+            © FASO EDUC • RÉFÉRENTIELS ET CONCOURS D'ÉLITE DE L'UEMOA
           </div>
         </div>
       </div>

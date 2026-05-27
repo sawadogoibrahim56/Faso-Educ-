@@ -162,6 +162,72 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
   // Game Play State
   const [loadingQuestions, setLoadingQuestions] = useState<boolean>(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>("CHARGEMENT DES INFRASTRUCTURES DE L'ARÈNE...");
+  const [progressPercent, setProgressPercent] = useState<number>(0);
+  const lastInvitationStatusRef = useRef<string>('none');
+
+  // Automated simulation of progress & professional patience messages during QCM launch loading screen
+  useEffect(() => {
+    if (!loadingQuestions) {
+      setProgressPercent(0);
+      return;
+    }
+
+    const messages = [
+      "Interrogation des bases de données académiques Faso Educ...",
+      "Calibration de l'intelligence artificielle générative...",
+      "Calage des barèmes et des niveaux d'exigence académique...",
+      "Rédaction des QCM avec l'algorithme d'Élite...",
+      "Élaboration des corrigés explicatifs détaillés...",
+      "Optimisation de la structure cognitive des énoncés...",
+      "Scellage informatique inviolable des fiches-réponses...",
+      "Ouverture officielle du canal de synchronisation du concours..."
+    ];
+
+    let messageIdx = 0;
+    setLoadingMessage(messages[0]);
+
+    const msgInterval = setInterval(() => {
+      messageIdx = (messageIdx + 1) % messages.length;
+      setLoadingMessage(messages[messageIdx]);
+    }, 1750);
+
+    const progressInterval = setInterval(() => {
+      setProgressPercent(prev => {
+        if (prev >= 98) {
+          return 98;
+        }
+        const delta = Math.floor(Math.random() * 8) + 3;
+        return Math.min(98, prev + delta);
+      });
+    }, 300);
+
+    return () => {
+      clearInterval(msgInterval);
+      clearInterval(progressInterval);
+    };
+  }, [loadingQuestions]);
+
+  // Alert chime for multiplayer lobby when invitee joins
+  useEffect(() => {
+    if (isMultiplayer && multiplayerRole === 'host') {
+      if (invitationStatus === 'accepted' && lastInvitationStatusRef.current !== 'accepted') {
+        playSound('correct');
+        setChatMessages(prev => [
+          ...prev,
+          {
+            id: `chat-joined-${Date.now()}`,
+            senderName: 'Système Arène',
+            isAI: false,
+            isUser: false,
+            text: `🎉 Votre adversaire a accepté le défi et vient de s'installer à sa table d'examen ! Vous pouvez maintenant lancer l'épreuve.`,
+            time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+      }
+    }
+    lastInvitationStatusRef.current = invitationStatus;
+  }, [invitationStatus, isMultiplayer, multiplayerRole]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [timeLeft, setLeftTime] = useState<number>(45);
@@ -1279,8 +1345,131 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Sort live participants to show them swapping indices smoothly using framer-motion layout
   const sortedParticipants = [...participants].sort((a, b) => b.score - a.score);
 
+  if (loadingQuestions) {
+    return (
+      <div className="fixed inset-0 bg-slate-950/98 z-[9999] flex flex-col items-center justify-center p-6 text-white overflow-hidden select-none">
+        {/* Decorative ambient background glows */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-faso-blue/15 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-faso-green/15 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+        
+        <div className="max-w-md w-full text-center space-y-10 relative">
+          
+          {/* Official Seal / Header */}
+          <div className="space-y-3">
+            <span className="text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-500 font-extrabold px-3 py-1 rounded-full uppercase tracking-widest block mx-auto w-fit">
+              👑 SECTION DE SÉLECTION SCIENTIFIQUE
+            </span>
+            <h2 className="text-xl font-black text-gray-100 font-sans tracking-tight uppercase">
+              FASO-EDUC DECK LOADER
+            </h2>
+            <div className="h-[2px] w-24 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue mx-auto" />
+          </div>
+
+          {/* 3D Rolling Card / Cube Loading Animation */}
+          <div className="h-64 flex items-center justify-center relative">
+            
+            {/* Ambient revolving rings */}
+            <div className="absolute w-52 h-52 border border-slate-800/60 rounded-full animate-spin [animation-duration:15s]" />
+            <div className="absolute w-44 h-44 border border-dashed border-slate-700/30 rounded-full animate-spin [animation-duration:8s] [animation-direction:reverse]" />
+            
+            {/* Stacked Cards Layout creating depth */}
+            <div className="relative w-40 h-52 flex items-center justify-center">
+              
+              {/* Back Card 2 (Bottom layer) */}
+              <div className="absolute w-36 h-48 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl transform -rotate-12 translate-y-3 -translate-x-3 opacity-30 select-none pointer-events-none" />
+              
+              {/* Back Card 1 (Middle layer) */}
+              <div className="absolute w-36 h-48 bg-slate-900 border border-slate-800/80 rounded-2xl shadow-xl transform rotate-6 -translate-y-1 translate-x-1 opacity-50 select-none pointer-events-none" />
+              
+              {/* Front Main FLIPPING Card (The rolling continuous sheet) */}
+              <motion.div
+                animate={{
+                  rotateY: [0, 180, 180, 360],
+                  rotateX: [0, 0, 180, 180],
+                  scale: [1, 1.05, 0.95, 1],
+                  y: [0, -8, 8, 0]
+                }}
+                transition={{
+                  duration: 4.8,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="w-36 h-48 bg-slate-900 border-2 border-faso-blue rounded-2xl shadow-2xl flex flex-col justify-between p-4 relative overflow-hidden [transform-style:preserve-3d]"
+              >
+                {/* Visual content of the official exam script */}
+                <div className="absolute top-0 right-0 w-8 h-8 bg-faso-green/20 rounded-bl-full" />
+                
+                {/* Mini emblem */}
+                <div className="space-y-1 text-left">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-faso-green" />
+                    <div className="h-1 w-10 bg-slate-800 rounded-sm" />
+                  </div>
+                  <div className="h-1.5 w-16 bg-slate-800 rounded-sm" />
+                  <div className="h-[1px] w-full bg-slate-800/60 my-2" />
+                </div>
+                
+                {/* Pseudo QCM Options */}
+                <div className="space-y-1.5 text-left">
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 rounded-sm border border-faso-blue" />
+                    <div className="h-1 w-12 bg-slate-805 rounded-sm" />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 rounded-sm border border-faso-blue bg-faso-blue/40" />
+                    <div className="h-1 w-14 bg-slate-805 rounded-sm" />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 rounded-sm border border-faso-blue" />
+                    <div className="h-1 w-10 bg-slate-805 rounded-sm" />
+                  </div>
+                </div>
+
+                {/* Stars and stamps */}
+                <div className="flex justify-between items-center pt-2">
+                  <div className="h-2 w-6 bg-slate-800 rounded-sm" />
+                  <div className="w-4 h-4 rounded-full border border-amber-500/50 flex items-center justify-center">
+                    <span className="text-[6px] text-amber-500 font-bold">★</span>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          {/* Dynamic Patience Message Console & Simulated Progress Bar */}
+          <div className="space-y-4">
+            <div className="h-8 flex items-center justify-center">
+              <span className="text-xs font-mono text-cyan-400 tracking-wide font-extrabold text-center uppercase animate-pulse">
+                {loadingMessage}
+              </span>
+            </div>
+
+            {/* Simulated progress meter */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center text-[10px] font-mono text-gray-500 pl-1 pr-1 font-bold">
+                <span>REDACTION SCIENTIFIQUE</span>
+                <span>{progressPercent}%</span>
+              </div>
+              <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800/80 p-0.5 animate-pulse">
+                <div 
+                  className="h-full bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue rounded-full transition-all duration-300" 
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-gray-400 leading-relaxed max-w-sm mx-auto italic font-medium font-sans">
+              "Veuillez patienter pendant que nos algorithmes d'IA calibrés rédigent vos fiches d'examen d'élite. Cette rigueur académique garantit un concours de haut niveau."
+            </p>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-8 pb-16">
+    <div className="p-1 xs:p-2 sm:p-6 lg:p-8 w-full max-w-7xl mx-auto space-y-4 sm:space-y-8 pb-16">
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-850 pb-5">
         <button 
           onClick={onBack}
@@ -1424,12 +1613,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                   </div>
                 </div>
 
-                {/* Custom modern choice button selectors for difficulty level and timer duration */}
+                {/* Reorganized setup parameters according to user specifications */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   
-                  {/* Visual buttons for Level */}
+                  {/* 1. Study level */}
                   <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">🎚️ Niveau d'exigence académique</label>
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">🎚️ Niveau d'exigence académique (Study level)</label>
                     <div className="grid grid-cols-4 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
                       {(['Premier cycle', 'Licence', 'Master', 'Doctorat'] as Level[]).map((l) => (
                         <button
@@ -1452,9 +1641,9 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     </div>
                   </div>
 
-                  {/* Visual buttons for Difficulty */}
+                  {/* 2. Difficulty */}
                   <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⚡ Difficulté de l'épreuve</label>
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⚡ Difficulté de l'épreuve (Difficulty)</label>
                     <div className="grid grid-cols-3 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-2xl border border-gray-150 dark:border-gray-850">
                       {(['Facile', 'Moyen', 'Expert'] as Difficulty[]).map((d) => (
                         <button
@@ -1479,46 +1668,72 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-                  {/* Visual buttons for reflection timer duration per QCM */}
-                  <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⏱️ Durée de réflexion / QCM</label>
-                    <div className="grid grid-cols-5 gap-1 bg-gray-50 dark:bg-gray-950 p-1 rounded-xl border border-gray-150 dark:border-gray-850">
-                      {([15, 30, 45, 60, 90] as number[]).map((seconds) => (
-                        <button
-                          key={seconds}
-                          type="button"
-                          onClick={() => {
-                            setTimeLimit(seconds);
-                            playSound('correct');
-                          }}
-                          className={cn(
-                            "py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer text-center",
-                            timeLimit === seconds
-                              ? "bg-faso-green text-white shadow-xs font-black"
-                              : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
-                          )}
-                        >
-                          {seconds}s
-                        </button>
-                      ))}
-                    </div>
-                    <span className="text-[9px] text-gray-450 dark:text-gray-500 block text-right mt-1 italic font-semibold">
-                      {timeLimit === 15 ? "Format Blitz : très rythmé" : timeLimit === 90 ? "Format Théorique : propice aux calculs" : "Format Standard équilibré"}
+                {/* 3. Number of questions */}
+                <div className="space-y-3 pt-1">
+                  <div className="flex items-center justify-between pl-1">
+                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest">📝 Nombre total de questions (Number of questions)</label>
+                    <span className="text-xs font-black bg-faso-green/10 text-faso-green dark:text-green-400 px-3 py-1 rounded-full border border-faso-green/20">
+                      {questionCount} questions générées
                     </span>
                   </div>
 
-                  {/* Section: Compétition contre l'IA */}
-                  <div className="p-3 bg-gray-50 dark:bg-gray-955 space-y-2 rounded-2xl border border-gray-150 dark:border-gray-850 text-left">
+                  {/* Presets Grid */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {[10, 20, 40, 60].map((count) => (
+                      <button
+                        key={count}
+                        type="button"
+                        onClick={() => {
+                          setQuestionCount(count);
+                          playSound('correct');
+                        }}
+                        className={cn(
+                          "py-3 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer text-center",
+                          questionCount === count 
+                            ? "bg-faso-green text-white border-faso-green shadow-sm shadow-faso-green/15 font-black" 
+                            : "bg-gray-50 dark:bg-gray-955 hover:bg-white dark:hover:bg-gray-900 text-slate-705 dark:text-gray-350 border-gray-200 dark:border-gray-850"
+                        )}
+                      >
+                        {count} QCMs
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Range Slider for custom selection */}
+                  <div className="bg-gray-50 dark:bg-gray-955 p-4 rounded-2xl border border-gray-150 dark:border-gray-855 space-y-3">
+                    <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 font-bold">
+                      <span>MIN: 5 questions</span>
+                      <span>MOYEN: 30 questions</span>
+                      <span>MAX: 60 questions</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="5"
+                      max="60"
+                      step="1"
+                      value={questionCount}
+                      onChange={(e) => setQuestionCount(Number(e.target.value))}
+                      className="w-full accent-faso-green h-2 bg-gray-200 dark:bg-gray-805 rounded-lg cursor-pointer"
+                    />
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center leading-normal italic pl-4 pr-4">
+                      En déplaçant le curseur, vous modulez fidèlement l'amplitude d’évaluation du QCM par l'IA.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                  {/* 4. Competition against AI & 5. AI difficulty */}
+                  <div className="p-4 bg-gray-50 dark:bg-gray-955 rounded-2xl border border-gray-150 dark:border-gray-850 space-y-3.5 text-left">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-slate-450 dark:text-gray-405 uppercase tracking-widest">🤖 Compétition contre l'IA</span>
+                      <span className="text-[10px] font-black text-slate-450 dark:text-gray-405 uppercase tracking-widest flex items-center gap-1.5">
+                        <span>🤖 Compétition contre l'IA</span>
+                      </span>
                       <button
                         type="button"
                         onClick={() => {
                           const val = !aiCompetition;
                           setAiCompetition(val);
-                          // Automatically toggle arenaType to robots if enabled, or back to solo
                           if (val) {
                             setArenaType('robots');
                           } else {
@@ -1539,9 +1754,9 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     </div>
 
                     {aiCompetition && (
-                      <div className="space-y-1">
-                        <span className="text-[9px] font-extrabold text-gray-450 dark:text-gray-400 uppercase tracking-widest block">Intelligence de l'IA</span>
-                        <div className="grid grid-cols-3 gap-1 bg-white dark:bg-gray-900 p-0.5 rounded-lg border border-gray-200/50 dark:border-gray-800">
+                      <div className="space-y-1 pt-2 border-t border-slate-200/50 dark:border-gray-800">
+                        <span className="text-[9px] font-extrabold text-gray-450 dark:text-gray-400 uppercase tracking-widest block">Intelligence de l'IA (AI Difficulty)</span>
+                        <div className="grid grid-cols-3 gap-1 bg-white dark:bg-gray-900 p-0.5 rounded-lg border border-gray-200/50 dark:border-gray-800 animate-fade-in">
                           {(['Facile', 'Moyen', 'Expert'] as Difficulty[]).map((d) => (
                             <button
                               key={d}
@@ -1565,59 +1780,34 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     )}
                   </div>
 
-                </div>
-
-                {/* Questions Volume Preset buttons & Slider */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between pl-1">
-                    <label className="text-[10px] font-black text-slate-400 dark:text-gray-400 uppercase tracking-widest">📝 Nombre total de questions (QCMs)</label>
-                    <span className="text-xs font-black bg-faso-green/10 text-faso-green dark:text-green-400 px-3 py-1 rounded-full border border-faso-green/20">
-                      {questionCount} questions générées
+                  {/* Visual buttons for reflection timer duration per QCM */}
+                  <div className="space-y-2 text-left p-4 bg-gray-50 dark:bg-gray-955 rounded-2xl border border-gray-150 dark:border-gray-850">
+                    <label className="text-[10px] font-black text-slate-450 dark:text-gray-400 uppercase tracking-widest block pl-1">⏱️ Durée de réflexion / QCM</label>
+                    <div className="grid grid-cols-5 gap-1 bg-white dark:bg-gray-900 p-1 rounded-xl border border-gray-150 dark:border-gray-800">
+                      {([15, 30, 45, 60, 90] as number[]).map((seconds) => (
+                        <button
+                          key={seconds}
+                          type="button"
+                          onClick={() => {
+                            setTimeLimit(seconds);
+                            playSound('correct');
+                          }}
+                          className={cn(
+                            "py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer text-center",
+                            timeLimit === seconds
+                              ? "bg-faso-green text-white shadow-xs font-black"
+                              : "text-slate-650 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-900"
+                          )}
+                        >
+                          {seconds}s
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[9px] text-gray-450 dark:text-gray-500 block text-right mt-1 italic font-semibold">
+                      {timeLimit === 15 ? "Format Blitz : très rythmé" : timeLimit === 90 ? "Format Théorique : propice aux calculs" : "Format Standard"}
                     </span>
                   </div>
 
-                  {/* Presets Grid */}
-                  <div className="grid grid-cols-4 gap-2">
-                    {[10, 20, 40, 60].map((count) => (
-                      <button
-                        key={count}
-                        type="button"
-                        onClick={() => {
-                          setQuestionCount(count);
-                          playSound('correct');
-                        }}
-                        className={cn(
-                          "py-3 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer text-center",
-                          questionCount === count 
-                            ? "bg-faso-green text-white border-faso-green shadow-sm shadow-faso-green/15 font-black" 
-                            : "bg-gray-50 dark:bg-gray-950 hover:bg-white dark:hover:bg-gray-900 text-slate-700 dark:text-gray-350 border-gray-200 dark:border-gray-800"
-                        )}
-                      >
-                        {count} QCMs
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Range Slider for custom selection */}
-                  <div className="bg-gray-50 dark:bg-gray-955 p-4 rounded-2xl border border-gray-150 dark:border-gray-850 space-y-3">
-                    <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 font-bold">
-                      <span>MIN: 5 questions</span>
-                      <span>MOYEN: 30 questions</span>
-                      <span>MAX: 60 questions</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="5"
-                      max="60"
-                      step="1"
-                      value={questionCount}
-                      onChange={(e) => setQuestionCount(Number(e.target.value))}
-                      className="w-full accent-faso-green h-2 bg-gray-200 dark:bg-gray-805 rounded-lg cursor-pointer"
-                    />
-                    <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center leading-normal italic pl-4 pr-4">
-                      En déplaçant le curseur, vous modulez fidèlement l'amplitude d’évaluation du QCM par l'IA.
-                    </p>
-                  </div>
                 </div>
 
               </div>

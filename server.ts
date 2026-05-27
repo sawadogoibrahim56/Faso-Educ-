@@ -1967,6 +1967,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     return res.json({
       success: true,
       email,
+      code: otpCode, // Safely provide backup recovery code in response
       message: "Un code d'autorisation OTP de réinitialisation de 6 chiffres a été envoyé par e-mail avec succès."
     });
   } else {
