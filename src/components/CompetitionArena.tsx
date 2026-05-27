@@ -245,6 +245,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const responseTimersRef = useRef<number[]>([]);
+  const lastSelectedTimeRef = useRef<number | null>(null);
 
   // Sound play function
   const playSound = (type: 'correct' | 'wrong' | 'countdown' | 'finish' | 'chat') => {
@@ -735,6 +736,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
         setLeftTime(timeLimit);
         setStage('active');
         setUserAnswer(null);
+        lastSelectedTimeRef.current = null;
         setUserAnswers(new Array(generated.length).fill(null));
         setShowFeedback(false);
         setIsPaused(false);
@@ -787,16 +789,11 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     }
   };
 
-  // Live Timer effect during questions
+  // Rock-solid non-jittery Live Timer interval (not depending on timeLeft to avoid jitter and speed drifts)
   useEffect(() => {
     if (stage !== 'active' || isPaused || showFeedback) return;
 
-    if (timeLeft <= 0) {
-      handleRevealAnswers();
-      return;
-    }
-
-    const timer = setTimeout(() => {
+    const timer = setInterval(() => {
       setLeftTime(prev => {
         const next = prev - 1;
         if (next > 0 && next <= 5) {
@@ -806,20 +803,17 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       });
     }, 1000);
 
-    return () => clearTimeout(timer);
-  }, [stage, isPaused, showFeedback, timeLeft, currentQuestionIndex]);
+    return () => clearInterval(timer);
+  }, [stage, isPaused, showFeedback, currentQuestionIndex]);
 
-  // Synchronized automatic reveal when all participants have answered (Only in solo mode, challenge is fully timed)
+  // Triggers the final question reveal/verdict solely when the timer has run out
   useEffect(() => {
-    if (stage !== 'active' || showFeedback || isPaused || participants.length === 0) return;
-
-    const allAnswered = participants.every(p => p.status === 'answered');
-    if (allAnswered && arenaType === 'solo') {
+    if (stage === 'active' && !isPaused && !showFeedback && timeLeft <= 0) {
       handleRevealAnswers();
     }
-  }, [participants, stage, showFeedback, isPaused, arenaType]);
+  }, [timeLeft, stage, isPaused, showFeedback]);
 
-  // Automatic feedback transition to next question after 8 seconds
+  // Automatic feedback transition to next question after 2 seconds (visual highlight transition) - no intermediate explanation shown
   useEffect(() => {
     if (!showFeedback || stage !== 'active' || isPaused) return;
 
@@ -901,23 +895,43 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     };
   }, [stage, showFeedback, isPaused, currentQuestionIndex]);
 
-  // Handle User Response submission
+  // Handle User Response selection (allows modifying choices until time limit is used up)
   const handleUserSelectAnswer = (optionIdx: number) => {
-    if (showFeedback || userAnswer !== null) return;
+    if (showFeedback || stage !== 'active') return;
     setUserAnswer(optionIdx);
 
-    // Save to cumulative userAnswers array
+    // Save/update in cumulative userAnswers array
     setUserAnswers(prev => {
       const updated = [...prev];
       updated[currentQuestionIndex] = optionIdx;
       return updated;
     });
 
-    const isCorrect = optionIdx === questions[currentQuestionIndex].correctAnswer;
-    playSound(isCorrect ? 'correct' : 'wrong');
+    // Record the timeLeft at the moment of selection for speed-bonus computation
+    lastSelectedTimeRef.current = timeLeft;
 
-    const timeTaken = timeLimit - timeLeft;
-    const scoreAdded = isCorrect ? Math.round(20 * (timeLeft / timeLimit) + 20) : 0;
+    playSound('countdown'); // subtle tick choice feedback
+  };
+
+  // Reveal results of the active QCM question
+  const handleRevealAnswers = () => {
+    setShowFeedback(true);
+    setFeedbackTimeLeft(2); // Auto-advance after 2 seconds of visual highlights!
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    const currentQ = questions[currentQuestionIndex];
+    const finalAns = userAnswer;
+    const isCorrect = finalAns === currentQ.correctAnswer;
+    const selectTime = lastSelectedTimeRef.current !== null ? lastSelectedTimeRef.current : 0;
+    const timeTaken = finalAns !== null ? (timeLimit - selectTime) : timeLimit;
+    const scoreAdded = isCorrect ? Math.round(20 * (selectTime / timeLimit) + 20) : 0;
+
+    // Play appropriate sound feedback
+    if (finalAns !== null) {
+      playSound(isCorrect ? 'correct' : 'wrong');
+    } else {
+      playSound('wrong');
+    }
 
     // Sync to matchmaking backend if in multiplayer
     if (isMultiplayer && roomNumber) {
@@ -928,68 +942,37 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
           roomNumber,
           email: profile?.email,
           questionIndex: currentQuestionIndex,
-          optionIdx,
+          optionIdx: finalAns !== null ? finalAns : -1,
           isCorrect,
           timeTaken,
           scoreAdded
         })
-      }).catch(err => console.warn("Failed to publish live answer:", err));
-    }
-
-    // Update User participant properties
-    setParticipants(prev => prev.map(p => {
-      if (p.id === 'current-user' || p.id === profile?.email) {
-        return {
-          ...p,
-          status: 'answered',
-          lastTimeTaken: timeTaken,
-          lastSelectedOption: optionIdx,
-          lastAnswerCorrect: isCorrect,
-          score: p.score + scoreAdded
-        };
-      }
-      return p;
-    }));
-  };
-
-  // Reveal results of the active QCM question
-  const handleRevealAnswers = () => {
-    setShowFeedback(true);
-    setFeedbackTimeLeft(8);
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    // Sync timeout/missing answer in multiplayer
-    if (isMultiplayer && roomNumber && userAnswer === null) {
-      fetch(getApiUrl('/api/competition/room/answer'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomNumber,
-          email: profile?.email,
-          questionIndex: currentQuestionIndex,
-          optionIdx: -1,
-          isCorrect: false,
-          timeTaken: timeLimit,
-          scoreAdded: 0
-        })
-      }).catch(err => console.warn("Failed to publish timing out:", err));
+      }).catch(err => console.warn("Failed to publish visual answer:", err));
     }
 
     // Stop pending teammate submission simulators and resolve them instantly
     responseTimersRef.current.forEach(t => clearTimeout(t));
 
-    const currentQ = questions[currentQuestionIndex];
-
-    // Any participant that hadn't answered now automatically fails or gets resolved
+    // Resolve all participant states
     setParticipants(prev => {
       const resolved = prev.map(p => {
-        if (p.id === 'current-user') return p;
+        if (p.id === 'current-user' || p.id === profile?.email) {
+          return {
+            ...p,
+            status: 'answered',
+            lastTimeTaken: timeTaken,
+            lastSelectedOption: finalAns,
+            lastAnswerCorrect: isCorrect,
+            score: p.score + scoreAdded
+          };
+        }
+
         if (p.status !== 'answered') {
           // Resolve late-answering AIs and peers instantly
           const isCorrect = Math.random() < p.accuracy * 0.8; // slightly penalized accuracy for timing out
           let chosenOption = currentQ.correctAnswer;
           if (!isCorrect) {
-            const wrongOptions = [0, 1, 2, 3].filter(o => o !== currentQ.correctAnswer);
+            const wrongOptions = [0, 1, 2,  3].filter(o => o !== currentQ.correctAnswer);
             chosenOption = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
           }
           return {
@@ -1010,8 +993,6 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
           };
         }
       });
-
-      // Sort live rankings for next steps
       return resolved;
     });
 
@@ -1021,7 +1002,6 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       const randomOpponents = participants.filter(p => p.id !== 'current-user');
       if (randomOpponents.length > 0) {
         const commenter = randomOpponents[Math.floor(Math.random() * randomOpponents.length)];
-        // Get reaction text depending on correctness of their answer resolved in previous render
         const actualReactionList = commenter.lastAnswerCorrect ? REACTION_PHRASES_CORRECT : REACTION_PHRASES_WRONG;
         const text = actualReactionList[Math.floor(Math.random() * actualReactionList.length)];
 
@@ -1058,6 +1038,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       setCurrentQuestionIndex(prev => prev + 1);
       setLeftTime(timeLimit);
       setUserAnswer(null);
+      lastSelectedTimeRef.current = null;
       setShowFeedback(false);
       setParticipants(prev => prev.map(p => ({
         ...p,
@@ -2271,7 +2252,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                 return (
                   <button
                     key={idx}
-                    disabled={showFeedback || userAnswer !== null}
+                    disabled={showFeedback}
                     onClick={() => handleUserSelectAnswer(idx)}
                     className={cn(
                       "w-full text-left p-4 rounded-2xl border font-semibold text-sm transition-all flex items-center justify-between",
@@ -2305,52 +2286,18 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
               })}
             </div>
 
-            {/* Interactive explanation/feedback footer block */}
+            {/* Interactive explanation/feedback footer block - skipped during live quiz per direct instructions */}
             <AnimatePresence>
               {showFeedback && (
                 <motion.div 
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-blue-50/70 border border-blue-105 rounded-2xl p-5 space-y-4 dark:bg-blue-950/20 dark:border-blue-900/40 text-left"
+                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl dark:bg-slate-900 dark:border-slate-800 text-center flex items-center justify-center"
                 >
-                  <div>
-                    <h4 className="font-extrabold text-sm text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
-                      <Sparkles size={16} /> Explication pédagogique Faso Educ (IA)
-                    </h4>
-                    <p className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
-                      Préparez-vous pour l'excellence académique burkinabè.
-                    </p>
-                  </div>
-                  
-                  <div className="text-xs sm:text-sm text-blue-900 dark:text-blue-200 leading-relaxed font-sans border-t border-b border-blue-100 dark:border-blue-900/30 py-3">
-                    <MathRenderer text={questions[currentQuestionIndex].explanation} />
-                  </div>
-
-                  {/* Automatic progression feedback strip and skip action */}
-                  <div className="space-y-2">
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                      <span className="text-xs font-bold text-green-700 dark:text-green-300 flex items-center gap-1.5 animate-pulse">
-                        <Zap size={14} className="text-faso-green" />
-                        Passage automatique {currentQuestionIndex === questions.length - 1 ? "aux résultats" : "à la question suivante"} dans {feedbackTimeLeft}s...
-                      </span>
-                      <button
-                        onClick={handleNextQuestion}
-                        className="w-full sm:w-auto px-4 py-2 bg-faso-blue hover:bg-blue-650 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1"
-                      >
-                        {currentQuestionIndex === questions.length - 1 ? "Résultats instantanés" : "Sauter l'attente"}
-                        <ArrowRight size={14} />
-                      </button>
-                    </div>
-
-                    <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1 overflow-hidden">
-                      <motion.div 
-                        className="bg-faso-green h-full"
-                        initial={{ width: "100%" }}
-                        animate={{ width: `${(feedbackTimeLeft / 8) * 100}%` }}
-                        transition={{ duration: 1, ease: "linear" }}
-                      />
-                    </div>
-                  </div>
+                  <span className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 justify-center animate-pulse">
+                    <Zap size={14} className="text-faso-green" />
+                    Verdict Faso Educ... Passage automatique dans {feedbackTimeLeft}s...
+                  </span>
                 </motion.div>
               )}
             </AnimatePresence>
