@@ -1196,6 +1196,7 @@ interface RoomState {
   status: 'lobby' | 'active' | 'podium';
   currentQuestionIndex: number;
   answers: RoomAnswers;
+  questionStartedAt?: number;
   lastUpdated: number;
 }
 
@@ -1360,7 +1361,8 @@ app.get("/api/competition/room/status/:roomNumber", (req, res) => {
     roomState: room,
     invitation,
     hostOnline,
-    inviteeOnline
+    inviteeOnline,
+    serverTime: Date.now()
   });
 });
 
@@ -1374,6 +1376,7 @@ app.post("/api/competition/room/start", (req, res) => {
   room.questions = questions;
   room.status = 'active';
   room.currentQuestionIndex = 0;
+  room.questionStartedAt = Date.now();
   room.answers = {
     [room.hostEmail]: {},
     [room.inviteeEmail]: {}
@@ -1415,6 +1418,7 @@ app.post("/api/competition/room/next", (req, res) => {
 
   if (typeof nextIndex === 'number') {
     room.currentQuestionIndex = nextIndex;
+    room.questionStartedAt = Date.now();
     if (room.questions.length > 0 && nextIndex >= room.questions.length) {
       room.status = 'podium';
     }

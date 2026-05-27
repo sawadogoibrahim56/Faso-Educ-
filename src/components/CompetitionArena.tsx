@@ -412,7 +412,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
               if (room.status === 'active' && room.questions && room.questions.length > 0) {
                 setQuestions(room.questions);
                 setCurrentQuestionIndex(room.currentQuestionIndex);
-                setLeftTime(invite?.timeLimit || timeLimit);
+                
+                const limit = invite?.timeLimit || timeLimit;
+                const elapsed = room.questionStartedAt ? Math.floor((data.serverTime - room.questionStartedAt) / 1000) : 0;
+                const initialTimeLeft = Math.max(0, limit - elapsed);
+                setLeftTime(initialTimeLeft);
+                
                 setStage('active');
                 setUserAnswer(null);
                 setUserAnswers(new Array(room.questions.length).fill(null));
@@ -474,22 +479,19 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
               // Setup local answer state based on server synced profile status
               if (myCurrentAnswer && userAnswer === null) {
-                // If it was already processed on backend, match local variable
                 setUserAnswer(myCurrentAnswer.optionIdx);
-              }
-
-              // Automatically reveal answers if BOTH have answered!
-              if (myCurrentAnswer && peerCurrentAnswer && !showFeedback) {
-                setShowFeedback(true);
-                setFeedbackTimeLeft(8);
-                playSound(myCurrentAnswer.isCorrect ? 'correct' : 'wrong');
               }
 
               // Synchronise transitions to the next indices
               if (room.currentQuestionIndex !== currentQuestionIndex) {
                 if (room.currentQuestionIndex < room.questions.length) {
                   setCurrentQuestionIndex(room.currentQuestionIndex);
-                  setLeftTime(invite?.timeLimit || timeLimit);
+                  
+                  const limit = invite?.timeLimit || timeLimit;
+                  const elapsed = room.questionStartedAt ? Math.floor((data.serverTime - room.questionStartedAt) / 1000) : 0;
+                  const initialTimeLeft = Math.max(0, limit - elapsed);
+                  setLeftTime(initialTimeLeft);
+                  
                   setUserAnswer(null);
                   setShowFeedback(false);
                 } else {
@@ -910,6 +912,26 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     // Record the timeLeft at the moment of selection for speed-bonus computation
     lastSelectedTimeRef.current = timeLeft;
 
+    // Sync state to matchmaking server immediately if in multiplayer
+    if (isMultiplayer && roomNumber) {
+      const isCorrect = optionIdx === questions[currentQuestionIndex].correctAnswer;
+      const timeTaken = timeLimit - timeLeft;
+      const scoreAdded = isCorrect ? Math.round(20 * (timeLeft / timeLimit) + 20) : 0;
+      fetch(getApiUrl('/api/competition/room/answer'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomNumber,
+          email: profile?.email,
+          questionIndex: currentQuestionIndex,
+          optionIdx,
+          isCorrect,
+          timeTaken,
+          scoreAdded
+        })
+      }).catch(err => console.warn("Failed to publish live answer selection:", err));
+    }
+
     playSound('countdown'); // subtle tick choice feedback
   };
 
@@ -1074,7 +1096,10 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Generate official PDF Bulletin/Certificate of administrative competitive success
   const handleGenerateBulletinPDF = () => {
     const doc = new jsPDF();
-    const sorted = [...participants].sort((a, b) => b.score - a.score);
+    const sorted = [...participants].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.id.localeCompare(b.id);
+    });
     const userRank = sorted.findIndex(p => p.id === 'current-user') + 1;
     const user = participants.find(p => p.id === 'current-user');
 
@@ -1324,7 +1349,12 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   };
 
   // Sort live participants to show them swapping indices smoothly using framer-motion layout
-  const sortedParticipants = [...participants].sort((a, b) => b.score - a.score);
+  const sortedParticipants = [...participants].sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return a.id.localeCompare(b.id);
+  });
 
   if (loadingQuestions) {
     return (
