@@ -262,15 +262,322 @@ const ai = new GoogleGenAI({
   }
 });
 
+// Premium High-Performance Local Fallback Database for Faso Educ Concours (French/LaTeX)
+const FALLBACK_QUIZ_DATABASE = [
+  // MICROECONOMIE
+  {
+    text: "Soit un consommateur ayant pour fonction de préférence Cobb-Douglas $U(x, y) = x^{0.5} y^{0.5}$ face aux prix $P_x$ et $P_y$. L'élasticité-revenu de la demande pour le bien $x$ est égale à :",
+    options: ["$-1.0$", "$0.0$", "$1.0$", "$0.5$"],
+    correctAnswer: 2,
+    explanation: "Pour une fonction d'utilité Cobb-Douglas homogène, la part du budget allouée à chaque bien est constante et égale à la puissance du bien sur la somme des puissances. Par conséquent, la demande s'écrit $x(R) = a \\cdot \\frac{R}{P_x}$, ce qui conduit à une élasticité-revenu unitaire $\\epsilon_R = 1$.",
+    dimension: "Intellectuelle",
+    tags: ["microeconomie", "economie", "cobb-douglas", "cours"]
+  },
+  {
+    text: "Dans la théorie de la production à court terme, la loi des rendements décroissants énonce que si l'on accroît régulièrement l'utilisation d'un facteur variable (comme le travail $L$) avec un facteur fixe (le capital $K$) :",
+    options: [
+      "La production totale diminue de façon absolue dès le premier travailleur supplémentaire",
+      "La productivité marginale globale $P_m = \\frac{\\partial Y}{\\partial L}$ du facteur variable finit par décroître",
+      "Le coût total moyen $CTM$ devient nul",
+      "La productivité moyenne globale augmente de façon strictement exponentielle"
+    ],
+    correctAnswer: 1,
+    explanation: "La loi des rendements non proportionnels (ou décroissants) stipule qu'au-delà d'un certain point, l'ajout progressif d'unités d'un facteur variable sur un facteur fixe produit des augmentations de production de plus en plus faibles, donc une baisse de la productivité marginale.",
+    dimension: "Intellectuelle",
+    tags: ["microeconomie", "economie", "production"]
+  },
+  {
+    text: "Soit la fonction de coût total d'une entreprise concurrentielle en équilibre de court terme : $CT(q) = 2q^2 + 8q + 18$. Quel est le seuil de fermeture théorique de cette entreprise s'il n'y a pas de coûts fixes irrécupérables ?",
+    options: ["$P = 18$", "$P = 8$", "$P = 2$", "$P = 12$"],
+    correctAnswer: 1,
+    explanation: "Le seuil de fermeture correspond au minimum du coût variable moyen ($CVM$). Ici, le coût variable est $CV(q) = 2q^2 + 8q$. Donc $CVM(q) = 2q + 8$, dont le minimum est obtenu pour $q \\to 0$, ce qui donne $CVM_{min} = 8$. L'entreprise ferme si le prix de marché est strictement inférieur à 8.",
+    dimension: "Intellectuelle",
+    tags: ["microeconomie", "economie", "cout"]
+  },
+  {
+    text: "En situation de monopole pur, la condition d'optimisation du profit à long terme s'écrit de la façon suivante :",
+    options: [
+      "Le coût marginal est égal à la recette marginale ($Cm = Rm$)",
+      "Le prix est strictement égal au coût marginal moyen ($P = CM$)",
+      "La recette totale est maximisée au point où l'élasticité est nulle",
+      "Le coût moyen est supérieur à la recette moyenne"
+    ],
+    correctAnswer: 0,
+    explanation: "Pour tout producteur (qu'il soit en concurrence ou en monopole), le profit est maximum lorsque la dernière unité produite rapporte exactement ce qu'elle coûte à produire, soit $Cm = Rm$. Le monopoleur applique ensuite un prix sur la courbe de demande supérieur au coût marginal.",
+    dimension: "Intellectuelle",
+    tags: ["microeconomie", "economie", "monopole", "marché"]
+  },
+  // MACROECONOMIE
+  {
+    text: "Dans le modèle IS-LM en économie fermée avec rigidité des prix, une hausse des dépenses publiques financée par emprunt provoquée sans création de monnaie entraîne :",
+    options: [
+      "Une baisse immédiate du PIB réel et un recul du taux d'intérêt",
+      "Un effet d'éviction par une hausse du taux d'intérêt, limitant la hausse finale du revenu",
+      "Une dépréciation immédiate du taux de change fixe",
+      "Une déflation par excès d'offre monétaire liquide"
+    ],
+    correctAnswer: 1,
+    explanation: "L'augmentation des dépenses publiques déplace la courbe IS vers la droite. Cela accroît la demande globale et le revenu, ce qui augmente la demande de monnaie pour des raisons de transaction. Le taux d'intérêt s'ajuste à la hausse sur le marché monétaire (courbe LM stable), ce qui réduit l'investissement privé (effet d'éviction).",
+    dimension: "Intellectuelle",
+    tags: ["macroeconomie", "economie", "is-lm", "cours"]
+  },
+  {
+    text: "Selon la règle d'or d'accumulation du capital dans le modèle de croissance de Robert Solow, la consommation par tête est maximale à l'état régulier lorsque la productivité marginale du capital (nette de dépréciation $\\delta$) est égale à :",
+    options: [
+      "Le double du taux de profit de court terme",
+      "Le taux de croissance de la population active $n$, soit $PMK - \\delta = n$",
+      "Le taux d'imposition marginal des hauts revenus",
+      "Zéro, soit une saturation totale de l'investissement"
+    ],
+    correctAnswer: 1,
+    explanation: "La règle d'or énonce que pour maximiser la consommation par tête à l'état régulier, le taux d'épargne doit être ajusté pour que la productivité marginale nette du capital égale le taux de croissance démographique, soit $d f(k^*)/dk = n + \\delta$.",
+    dimension: "Intellectuelle",
+    tags: ["macroeconomie", "economie", "solow", "croissance"]
+  },
+  {
+    text: "La relation inverse à court terme entre le taux de chômage et le taux de variation des salaires nominaux (ou de l'inflation) est modélisée par :",
+    options: [
+      "La loi d'Okun",
+      "La courbe de Phillips",
+      "La théorie de la préférence pour la liquidité",
+      "Le théorème d'équivalence de Ricardo-Barro"
+    ],
+    correctAnswer: 1,
+    explanation: "La courbe de Phillips met en évidence une relation d'arbitrage à court terme entre inflation et chômage : lorsque le chômage est bas, la tension sur le marché de l'emploi entraîne une hausse des salaires et donc de l'inflation.",
+    dimension: "Intellectuelle",
+    tags: ["macroeconomie", "economie", "inflation", "chomage"]
+  },
+  // STATISTIQUES & PROBABILITES
+  {
+    text: "Soit $X$ une variable aléatoire suivant une loi normale d'espérance $\\mu = 50$ et de variance $\\sigma^2 = 16$. Quelle est la probabilité approximative que $X$ appartienne à l'intervalle de fluctuation $[42, 58]$ ?",
+    options: ["$50\\%$", "$68\\%$", "$95\\%$", "$99.7\\%$"],
+    correctAnswer: 2,
+    explanation: "L'intervalle de confiance et de fluctuation à deux écarts-types d'une loi normale couvre approximativement $95.4\\%$ de la distribution. Ici, l'écart-type est $\\sigma = \\sqrt{16} = 4$. L'intervalle proposé correspond à $[\\mu - 2\\sigma, \\mu + 2\\sigma] = [50 - 8, 50 + 8] = [42, 58]$, donc environ $95\\%$ de probabilité.",
+    dimension: "Intellectuelle",
+    tags: ["statistiques", "mathematiques", "probabilites", "cours"]
+  },
+  {
+    text: "Le théorème central limite (TCL) postule que la somme (ou la moyenne empirique) de $n$ variables aléatoires indépendantes et identiquement distribuées, de moyenne $\\mu$ et de variance $\\sigma^2$ finie, converge en loi vers :",
+    options: [
+      "Une loi de Poisson binomiale de paramètre $\\lambda = \\frac{\\mu}{n}$",
+      "Une loi normale de moyenne $\\mu$ et d'écart-type $\\frac{\\sigma}{\\sqrt{n}}$",
+      "Une loi uniforme continue sur l'intervalle $[0, 1]$",
+      "Une loi de Student à $n-2$ degrés de liberté"
+    ],
+    correctAnswer: 1,
+    explanation: "Selon le TCL, peu importe la distribution d'origine des variables, dès lors que la taille de l'échantillon $n$ est suffisamment grande (généralement $n \\geq 30$), la moyenne de l'échantillon tend vers une distribution normale d'espérance $\\mu$ et d'écart-type $\\frac{\\sigma}{\\sqrt{n}}$.",
+    dimension: "Intellectuelle",
+    tags: ["statistiques", "mathematiques", "probabilites"]
+  },
+  {
+    text: "Pour exprimer la dispersion relative des observations autour de la moyenne arithmétique globale, on calcule le coefficient de variation ($CV$). Comment est-il défini ?",
+    options: [
+      "Le rapport de l'écart-type sur la moyenne : $CV = \\frac{\\sigma}{\\bar{x}}$",
+      "Le carré de la variance divisé par l'étendue",
+      "La somme cumulée de l'erreur absolue moyenne",
+      "Le produit des valeurs extrêmes divisé par la médiane"
+    ],
+    correctAnswer: 0,
+    explanation: "Le coefficient de variation ($CV$) est une mesure de dispersion sans dimension, définie comme le rapport de l'écart-type $\\sigma$ par la moyenne arithmétique $\\bar{x}$. Il est souvent exprimé en pourcentage pour comparer la variabilité de séries d'unités différentes.",
+    dimension: "Intellectuelle",
+    tags: ["statistiques", "mathematiques", "stat", "probabilites"]
+  },
+  // FINANCES PUBLIQUES & UEMOA
+  {
+    text: "Parmi les critères de convergence de premier rang édictés par l'UEMOA pour ses États membres, le taux d'inflation annuel moyen ne doit pas dépasser :",
+    options: ["$1.5\\%$", "$3\\%$", "$5\\%$", "$10\\%$"],
+    correctAnswer: 1,
+    explanation: "Le critère de convergence de premier rang de l'UEMOA lié à la stabilité des prix dicte que le taux d'inflation annuel moyen dans chaque pays membre ne doit pas excéder $3\\%$ par an.",
+    dimension: "Mémoire",
+    tags: ["finances", "uemoa", "burkina", "economie"]
+  },
+  {
+    text: "Quelle institution de l'UEMOA est chargée du contrôle juridictionnel des comptes des organes de l'Union et de veiller à la bonne gestion des deniers publics communautaires ?",
+    options: [
+      "La Banque Centrale des États de l'Afrique de l'Ouest (BCEAO)",
+      "La Cour de Justice de l'Union",
+      "La Cour des Comptes de l'UEMOA",
+      "Le Conseil des Ministres de la Zone Franc"
+    ],
+    correctAnswer: 2,
+    explanation: "La Cour des Comptes de l'UEMOA est l'organe juridictionnel suprême chargé du contrôle de la gestion des ressources budgétaires communautaires et de l'examen des situations financières des États de la zone.",
+    dimension: "Mémoire",
+    tags: ["finances", "uemoa", "burkina", "commerce"]
+  },
+  {
+    text: "Quel est le seuil limite fixé pour le ratio de l'encours de la dette publique totale (intérieure et extérieure) par rapport au PIB nominal dans les critères de premier rang de l'UEMOA ?",
+    options: ["Maximum $50\\%$", "Maximum $70\\%$", "Maximum $60\\%$", "Minimum $30\\%$"],
+    correctAnswer: 1,
+    explanation: "Le critère d'endettement public de premier rang au sein de l'UEMOA impose aux États membres occidentaux que leur encours total de dette publique totale (dette intérieure et dette extérieure) ne dépasse pas $70\\%$ de leur PIB nominal.",
+    dimension: "Mémoire",
+    tags: ["finances", "uemoa", "economie", "cours"]
+  },
+  // MATHEMATIQUES GENERALES
+  {
+    text: "Soient deux assertions mathématiques $A$ et $B$. L'implication logique $A \\implies B$ est fausse uniquement dans lequel des cas suivants :",
+    options: [
+      "$A$ est vraie et $B$ est fausse",
+      "$A$ est fausse et $B$ est vraie",
+      "$A$ et $B$ sont toutes les deux fausses",
+      "La proposition réciproque $B \\implies A$ est établie"
+    ],
+    correctAnswer: 0,
+    explanation: "Selon les tables de vérité de l'implication en logique formelle, $A \\implies B$ est toujours vraie, sauf dans la situation unique où la prémisse $A$ est vraie mais la conclusion $B$ s'avère fausse.",
+    dimension: "Intellectuelle",
+    tags: ["mathematiques", "algebre", "cours"]
+  },
+  {
+    text: "La dérivée de la fonction composée $f(g(x))$ s'exprime selon les règles d'analyse mathématique par :",
+    options: [
+      "$f'(g(x)) \\times g'(x)$",
+      "$f'(x) \\times g'(x)$",
+      "$f'(g'(x))$",
+      "$f(x) \\times g'(x) + f'(x) \\times g(x)$"
+    ],
+    correctAnswer: 0,
+    explanation: "La dérivée d'une fonction composée, ou règle de dérivation en chaîne, stipule que $(f \\circ g)'(x) = f'(g(x)) \\cdot g'(x)$.",
+    dimension: "Intellectuelle",
+    tags: ["mathematiques", "analyse"]
+  },
+  {
+    text: "Soit $(u_n)_{n \\in \\mathbb{N}}$ une suite géométrique de premier terme $u_0 = 3$ et de raison $q = 2$. Quelle est la somme $S = u_0 + u_1 + \\dots + u_5$ de ses 6 premiers termes ?",
+    options: ["$189$", "$93$", "$120$", "$63$"],
+    correctAnswer: 0,
+    explanation: "La formule de la somme des termes d'une suite géométrique est $S = u_0 \\frac{1 - q^N}{1 - q}$ où $N$ est le nombre de termes. Ici : $S = 3 \\cdot \\frac{1 - 2^6}{1 - 2} = 3 \\cdot (64 - 1) = 3 \\cdot 63 = 189$.",
+    dimension: "Intellectuelle",
+    tags: ["mathematiques", "suites"]
+  },
+  // BURKINA FASO CULTURE, HISTOIRE, CIVISME
+  {
+    text: "Au Burkina Faso, la charte de la transition de 2022 réaffirme le statut du pays. Quel fleuve donne son nom d'origine coloniale (Haute-Volta) à notre chère patrie ?",
+    options: ["Le Niger", "Le fleuve Volta (avec la Volta Noire, Blanche et Rouge)", "Le fleuve Comoé", "Le fleuve Congo"],
+    correctAnswer: 1,
+    explanation: "Le Burkina Faso s'appelait autrefois la République de Haute-Volta en référence au fleuve Volta, dont les trois principaux affluents (la Volta Noire ou Mouhoun, la Volta Blanche ou Nakambé, et la Volta Rouge ou Nazinon) baignent ses régions.",
+    dimension: "Mémoire",
+    tags: ["burkina", "histoire", "geographie"]
+  },
+  {
+    text: "Dans le découpage administratif actuel du Burkina Faso, le pays est structuré en combien de régions de planification administratives et combien de provinces ?",
+    options: [
+      "10 régions et 45 provinces",
+      "13 régions et 45 provinces",
+      "15 régions et 60 provinces",
+      "13 régions et 30 provinces"
+    ],
+    correctAnswer: 1,
+    explanation: "Le Burkina Faso comporte constitutionnellement et administrativement 13 régions de planification, dirigées par des Gouverneurs, subdivisées en 45 provinces gérées par des Hauts-Commissaires, elles-mêmes composées de 351 départements et communes.",
+    dimension: "Mémoire",
+    tags: ["burkina", "institution", "civisme"]
+  },
+  {
+    text: "Quel est le nom officiel de l'hymne national du Burkina Faso, dont les paroles ont été composées sous la révolution par le Président Thomas Sankara ?",
+    options: ["La Voltaïque", "Le Ditanyè (L'Hymne de la Victoire)", "Le Chant des Héros", "L'Hymne de Faso Educ"],
+    correctAnswer: 1,
+    explanation: "Le Ditanyè, ou Hymne de la Victoire, est l'hymne national du Burkina Faso adopté en 1984 en remplacement de 'La Voltaïque'. Il exprime la dignité, la lutte anticolonialiste et l'engagement révolutionnaire pour le développement national.",
+    dimension: "Mémoire",
+    tags: ["burkina", "histoire", "civisme", "cours"]
+  },
+  {
+    text: "Dans l'administration territoriale burkinabè, une province est politiquement et administrativement gouvernée au sommet par quel haut fonctionnaire nommé par l'État ?",
+    options: ["Le Préfet de région", "Le Haut-Commissaire", "Le Maire d'Arrondissement", "Le Secrétaire Général de la Province"],
+    correctAnswer: 1,
+    explanation: "Le Gouverneur dirige la Région, tandis que le Haut-Commissaire est le représentant suprême de l'État burkinabè à l'échelle de la Province. Les Préfets, eux, administrent les départements de chaque province.",
+    dimension: "Mémoire",
+    tags: ["burkina", "institution"]
+  },
+  {
+    text: "A quelle date historique la République de Haute-Volta a-t-elle obtenu son indépendance totale de l'administration coloniale française sous la direction de son premier Président, Maurice Yaméogo ?",
+    options: ["11 décembre 1958", "5 août 1960", "4 août 1984", "3 janvier 1966"],
+    correctAnswer: 1,
+    explanation: "La proclamation de l'indépendance de la Haute-Volta a été prononcée le 5 août 1960 par Maurice Yaméogo. Le 11 décembre 1958 correspond à la proclamation de la République autonome membre de la Communauté française.",
+    dimension: "Mémoire",
+    tags: ["burkina", "histoire"]
+  },
+  {
+    text: "Sur le drapeau national du Burkina Faso, l'étoile centrale jaune d'or à 5 branches symbolise constitutionnellement :",
+    options: [
+      "La production cotonnière majeure des régions de l'Ouest",
+      "La lumière guidant la révolution démocratique et populaire",
+      "La présence de ressources aurifères riches dans le sous-sol",
+      "Les cinq principaux cours d'eau du bassin versant de la Comoé"
+    ],
+    correctAnswer: 1,
+    explanation: "Sur le drapeau bicolore vert et rouge du Burkina Faso (les bandes verte et rouge figurant respectivement l'agriculture/l'espérance et le sang versé de nos martyrs), l'étoile jaune à cinq branches centrale représente le flambeau spirituel guidant la révolution démocratique et populaire.",
+    dimension: "Civisme",
+    tags: ["burkina", "civisme", "histoire", "culture"]
+  },
+  {
+    text: "Quelle grande ville industrielle du Burkina Faso est surnommée avec élégance la 'Cité du Paysan Noir' ?",
+    options: ["Koudougou", "Banfora", "Bobo-Dioulasso", "Ouahigouya"],
+    correctAnswer: 1,
+    explanation: "Banfora, chef-lieu de la région des Cascades, est surnommée la 'Cité du Paysan Noir' en raison de sa productivité agricole et industrielle florissante. Koudougou est surnommée la 'Cité du Cavalier Rouge'.",
+    dimension: "Mémoire",
+    tags: ["burkina", "geographie"]
+  },
+  {
+    text: "A dater de quelle année historique la République de Haute-Volta a-t-elle été officiellement rebaptisée 'Burkina Faso' sous la dynamique impulsion révolutionnaire du Capitaine Thomas Sankara ?",
+    options: ["1980", "1983", "1984", "1987"],
+    correctAnswer: 2,
+    explanation: "La Haute-Volta est officiellement devenue le 'Burkina Faso' (le Pays des Hommes Intègres) le 4 août 1984, un an jour pour jour après l'avènement de la révolution démocratique et populaire du 4 août 1983.",
+    dimension: "Mémoire",
+    tags: ["burkina", "histoire", "culture"]
+  },
+  {
+    text: "Dans le Sud-Ouest du Burkina Faso, quel site pittoresque d'une importance biologique et géologique majeure à proximité de Banfora attire de nombreux chercheurs ?",
+    options: [
+      "Les Cascades de Karfiguéla et les Dômes de Fabedougou",
+      "Le Pic de Nahouri",
+      "Le Parc National de l'Arly",
+      "La Mare aux Hippopotames de Bala"
+    ],
+    correctAnswer: 0,
+    explanation: "Les Cascades de Karfiguéla et les formations gréseuses des Dômes de Fabedougou, près de Banfora, sont des curiosités naturelles majeures caractéristiques de la géomorphologie de l'Ouest burkinabè.",
+    dimension: "Mémoire",
+    tags: ["burkina", "geographie"]
+  }
+];
+
+function getFallbackQuestions(subjects: string[], settings: any, totalTarget: number) {
+  const normSubjects = (subjects || []).map(s => s.toLowerCase().trim());
+  
+  // Filter questions that have matching tags/content
+  let pool = FALLBACK_QUIZ_DATABASE.filter(q => {
+    return q.tags.some(tag => {
+      return normSubjects.some(subj => subj.includes(tag) || tag.includes(subj));
+    });
+  });
+  
+  // If pool is too small, combine all available questions from the database
+  if (pool.length < totalTarget) {
+    const poolTextSet = new Set(pool.map(p => p.text));
+    const remainder = FALLBACK_QUIZ_DATABASE.filter(p => !poolTextSet.has(p.text));
+    pool = [...pool, ...remainder];
+  }
+  
+  // Shuffle list to provide unique feel each time
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  
+  // Select top totalTarget
+  const finalSelection = shuffled.slice(0, totalTarget);
+  
+  // Generate distinct IDs and build complete output items matching required properties
+  return finalSelection.map((q, i) => ({
+    text: q.text,
+    options: q.options,
+    correctAnswer: q.correctAnswer,
+    explanation: q.explanation + " [Généré avec succès via la Base Locale de Secours Faso Educ 🇧🇫]",
+    dimension: q.dimension,
+    id: `fall-${i}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
+  }));
+}
+
 // API Routes
 app.post("/api/gemini/quiz", async (req, res) => {
+  const { subjects, settings, excludeQuestions } = req.body;
+  const requestedCount = settings?.questionCount || 10;
+  const totalTarget = Math.min(100, Math.max(1, requestedCount));
+
   try {
-    const { subjects, settings, excludeQuestions } = req.body;
-    
-    const requestedCount = settings?.questionCount || 10;
-    // Cap total limit at 100 questions for extreme safety and reliability
-    const totalTarget = Math.min(100, Math.max(1, requestedCount));
-    
     const accumulatedQuestions: any[] = [];
     const baseExcludedList = [...(excludeQuestions || [])];
     
@@ -363,19 +670,18 @@ app.post("/api/gemini/quiz", async (req, res) => {
           break;
         }
         
-        if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429") || errMsg.includes("quota")) {
-          return res.status(429).json({
-            error: "quota_exceeded",
-            message: "⚠️ Quota de requêtes IA (Gemini) temporairement atteint ou saturé. L'API est soumise à des limites strictes sur l'accès gratuit. Veuillez réessayer à nouveau dans une minute."
-          });
-        }
-        throw err;
+        // If first batch fails or no questions yet, activate fallback immediately
+        console.info("🚨 Gemini API quota limit or exception. Activating elite local fallback database...");
+        const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+        return res.json(fallbackQs);
       }
     }
     
     // Safe fallback if loop finished but no questions generated
     if (accumulatedQuestions.length === 0) {
-      throw new Error("Aucune question n'a pu être générée par l'Intelligence Artificielle.");
+      console.info("🚨 Question generation empty loop. Serving fallback questions...");
+      const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      return res.json(fallbackQs);
     }
     
     const formattedQuestions = accumulatedQuestions.map((q: any, i: number) => ({
@@ -385,8 +691,13 @@ app.post("/api/gemini/quiz", async (req, res) => {
     
     return res.json(formattedQuestions);
   } catch (error: any) {
-    console.error("Quiz generation error on server:", error);
-    res.status(500).json({ error: error.message || "Failed to generate quiz questions" });
+    console.error("Quiz generation error on server, falling back:", error);
+    try {
+      const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      return res.json(fallbackQs);
+    } catch (fallbackError: any) {
+      res.status(500).json({ error: fallbackError.message || "Failed to generate fallback quiz questions" });
+    }
   }
 });
 
@@ -1905,91 +2216,56 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     return res.status(444).json({ error: "Aucun compte candidat n'existe avec cette adresse e-mail. Veuillez d'abord vous inscrire." });
   }
 
-  // Generate 6-digit secure verification OTP code
+  // Générer un code OTP de secours temporaire de 15 minutes
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   recoveryCodes.set(email, {
     code: otpCode,
     expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes limit
   });
 
-  let emailSent = false;
-  let errorMsg = "";
-  const transporter = getMailTransporter();
+  let supabaseAuthSent = false;
+  let supabaseErrorMsg = "";
 
-  if (transporter) {
+  if (supabaseAdmin) {
     try {
-      const senderUser = process.env.SMTP_USER || "votre-gmail-professionnel@gmail.com";
-      const mailOptions = {
-        from: `"Faso Educ - Support" <${senderUser}>`,
-        to: email,
-        subject: "🔑 Code de réinitialisation de votre mot de passe - Faso Educ",
-        text: `Bonjour ${userProfile.name || "Candidat"},\n\nVous avez demandé la réinitialisation de votre mot de passe pour le portail d'études d'élite Faso Educ.\n\nVotre code confidentiel OTP est : ${otpCode}\n\nCe code expirera dans 15 minutes.\n\nCordialement,\nService d'assistance Faso Educ`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 30px; background-color: #f8fafc; color: #1e293b;">
-            <div style="text-align: center; margin-bottom: 25px;">
-              <div style="display: inline-block; width: 50px; height: 50px; background: linear-gradient(135deg, #10b981, #3b82f6); border-radius: 12px; line-height: 50px; color: white; font-size: 24px; font-weight: bold;">F</div>
-              <h2 style="color: #0f172a; margin-top: 15px; margin-bottom: 5px; font-weight: 800; font-size: 22px;">Réinitialisation de mot de passe</h2>
-              <p style="color: #64748b; font-size: 13px; margin-top: 5px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">Faso Educ - Révisions d'Élite</p>
-            </div>
-            
-            <p style="font-size: 14px; line-height: 1.6; color: #334155;">
-              Bonjour <strong>${userProfile.name || "Candidat"}</strong>,
-              <br/><br/>
-              Vous avez formulé une demande de renouvellement de votre mot de passe d'accès académique Faso Educ.
-            </p>
-            
-            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
-               <p style="font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 0; margin-bottom: 12px;">Votre code OTP unique temporaire</p>
-               <div style="font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #3b82f6; font-family: 'Courier New', monospace; background-color: #f1f5f9; padding: 12px; border-radius: 8px; display: inline-block; width: fit-content; margin-bottom: 10px;">${otpCode}</div>
-               <p style="font-size: 12px; color: #ef4444; margin: 0; font-weight: 600;">⚠️ Ce code confidentiel expirera dans 15 minutes.</p>
-            </div>
-            
-            <p style="font-size: 13px; color: #475569; line-height: 1.5;">
-              Saisissez ce code dans le formulaire d'application pour valider votre identité et définir votre nouveau mot de passe sécurisé.
-              <br/><br/>
-              Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail en toute sécurité. Votre mot de passe actuel restera inchangé.
-            </p>
-            
-            <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 25px 0;" />
-            <p style="font-size: 11px; text-align: center; color: #94a3b8; line-height: 1.4; margin: 0;">
-              Cet e-mail automatique a été envoyé par <strong>Faso Educ</strong>.
-              <br/>
-              Propulsé par le Réseau de Concours d'Ibrahim Sawadogo.
-            </p>
-          </div>
-        `
-      };
-      await transporter.sendMail(mailOptions);
-      emailSent = true;
+      // Déterminer l'origine de l'application dynamiquement pour la redirection ou fallback sécurisé
+      const redirectUrl = `${req.headers.origin || 'http://localhost:3000'}/#recovery`;
+      
+      // Appel de la méthode native officielle Supabase Auth sans informations sensibles en dur
+      const { data, error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl
+      });
+
+      if (error) {
+        supabaseErrorMsg = error.message;
+        console.error("❌ Échec de resetPasswordForEmail par Supabase Auth:", error.message);
+      } else {
+        supabaseAuthSent = true;
+        console.info(`⚡ Supabase Auth a déclenché l'envoi de réinitialisation pour : ${email}`);
+      }
     } catch (err: any) {
-      console.error("Nodemailer SMTP forgot password dispatch failed:", err.message);
-      errorMsg = err.message || "Failed to send SMTP email";
+      supabaseErrorMsg = err.message || "Erreur lors de l'appel Supabase Auth";
+      console.error("❌ Exception lors de l'appel à resetPasswordForEmail:", err);
     }
+  } else {
+    supabaseErrorMsg = "Le client d'administration Supabase n'est pas initialisé sur ce serveur.";
   }
 
-  if (emailSent) {
+  if (supabaseAuthSent) {
     return res.json({
       success: true,
       email,
-      code: otpCode, // Safely provide backup recovery code in response
-      message: "Un code d'autorisation OTP de réinitialisation de 6 chiffres a été envoyé par e-mail avec succès."
+      code: otpCode, // Code OTP de secours pour assurer la fluidité de l'interface
+      message: "Un e-mail de réinitialisation a été envoyé avec succès par Supabase Auth via votre SMTP configuré."
     });
   } else {
-    // If SMTP credentials were provided but sending failed, we let them know why while offering the OTP recovery code so they aren't blocked
-    const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-    let userMsg = "";
-    if (smtpConfigured) {
-      userMsg = `⚠️ Attention : L'envoi automatique de l'e-mail via votre serveur SMTP (${process.env.SMTP_HOST}) a échoué avec l'erreur : "${errorMsg}". Veuillez vérifier vos configurations de variables d'environnement SMTP sur Render (hôte, port, nom d'utilisateur, ou mot de passe d'application). Par mesure de secours pour poursuivre votre test, vous pouvez saisir ce code OTP de simulation : ${otpCode}`;
-    } else {
-      userMsg = `✅ [MODE SIMULATION SANS SMTP] Un code OTP de récupération a été généré avec succès ! Saisissez le code suivant pour réinitialiser le mot de passe : ${otpCode}`;
-    }
-
+    // Si la configuration Supabase a échoué (par exemple locale sans réseau), on active le mode secours en toute sécurité
     return res.json({
       success: true,
       email,
       simulation: true,
       code: otpCode,
-      message: userMsg
+      message: `La tentative d'authentification par Supabase a signalé : "${supabaseErrorMsg}". Mode Secours activé : veuillez utiliser ce code de simulation temporaire : ${otpCode}`
     });
   }
 });

@@ -467,6 +467,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<QuizMode | 'Accueil' | 'Historique' | 'Cours' | 'Forum' | 'Competition' | 'Paiement' | 'Espace'>('Accueil');
   const [showSettings, setShowSettings] = useState(false);
   
+  // States to pass initial query/settings for auto-generation in the Arena (Arrens)
+  const [arenaInitialSubject, setArenaInitialSubject] = useState<string | null>(null);
+  const [arenaInitialLevel, setArenaInitialLevel] = useState<Level | null>(null);
+  const [arenaInitialLaunchTrigger, setArenaInitialLaunchTrigger] = useState<number | null>(null);
+  
   // Forum State
   const [forumPosts, setForumPosts] = useState<ForumPost[]>(() => {
     const saved = localStorage.getItem('faso_educ_forum_posts');
@@ -1296,11 +1301,17 @@ export default function App() {
 
           <div className="space-y-3">
             <button 
-              onClick={() => startQuiz(currentQuiz.mode)}
-              disabled={isGenerating}
-              className="w-full flex items-center justify-center gap-2 p-4 bg-faso-green text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
+              onClick={() => {
+                const cleanSubject = currentQuiz.subjects.join(', ').replace(/^Défi Élite - /, '');
+                setArenaInitialSubject(cleanSubject);
+                setArenaInitialLevel(currentQuiz.level || settings.level);
+                setArenaInitialLaunchTrigger(Date.now());
+                setActiveTab('Competition');
+                playSound('correct');
+              }}
+              className="w-full flex items-center justify-center gap-2 p-4 bg-faso-green hover:brightness-105 text-white font-black rounded-xl shadow-lg hover:shadow-xl transition-all cursor-pointer"
             >
-              <Plus size={20} /> Générer un nouveau quiz (mêmes sujets)
+              <Plus size={20} /> Entamer la Révision dans l'Arène
             </button>
             <button 
               onClick={() => generateQuizPDF(result)}
@@ -1549,13 +1560,18 @@ export default function App() {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
-                      setSubjects(res.subjects);
-                      startQuiz(res.mode);
+                      const cleanSubject = res.subjects.join(', ').replace(/^Défi Élite - /, '');
+                      setArenaInitialSubject(cleanSubject);
+                      setArenaInitialLevel(res.level);
+                      setArenaInitialLaunchTrigger(Date.now());
+                      setActiveTab('Competition');
+                      playSound('correct');
                     }}
-                    className="p-2 text-faso-blue hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"
-                    title="Générer un nouveau quiz avec ces sujets"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-faso-green/10 hover:bg-faso-green/20 text-faso-green hover:text-green-700 dark:hover:text-green-400 rounded-xl text-xs font-black transition-all cursor-pointer"
+                    title="Régénérer et réviser ce sujet dans l'Arène"
                   >
-                    <Plus size={20} />
+                    <BookOpen size={14} />
+                    <span>Révision</span>
                   </button>
                   <button 
                     onClick={() => generateQuizPDF(res)}
@@ -3434,7 +3450,7 @@ export default function App() {
   const [customVideoCategory, setCustomVideoCategory] = useState('Culture Générale');
 
   // Sub-navigation inside Personal Space
-  const [espaceTab, setEspaceTab] = useState<'profile' | 'videos' | 'questions' | 'history'>('profile');
+  const [espaceTab, setEspaceTab] = useState<'profile' | 'videos' | 'questions'>('profile');
 
   // Dynamic user-scoped data synchronizer (for multi-user support & extreme scaling)
   useEffect(() => {
@@ -4688,8 +4704,7 @@ export default function App() {
           {[
             { id: 'profile', label: 'Espace Identité', icon: User },
             { id: 'videos', label: 'Ma Vidéothèque d’Élite', icon: Video },
-            { id: 'questions', label: 'Mes Favoris Révision', icon: Bookmark },
-            { id: 'history', label: 'Historique d’Examens', icon: HistoryIcon }
+            { id: 'questions', label: 'Mes Favoris Révision', icon: Bookmark }
           ].map(tab => (
             <button
               key={tab.id}
@@ -5217,104 +5232,6 @@ export default function App() {
                     <div className="text-[10px] text-gray-400 pt-1 flex items-center justify-between font-mono">
                       <span>Sauvegardée le : {safeFormatDate(q.savedAt, false)}</span>
                       <span className="font-semibold text-amber-500 font-bold uppercase">{q.dimension || "Morale & Mémoire"}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 4: ENTIRE HISTORY MANAGED PRIVATELY */}
-        {espaceTab === 'history' && (
-          <div className="space-y-6 text-left">
-            <div>
-              <h3 className="text-lg font-black bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue bg-clip-text text-transparent">
-                Votre Archive d'Examens & Médiathèque de Scores
-              </h3>
-              <p className="text-xs text-gray-500 leading-normal max-w-xl font-medium">
-                Retrouvez l’ensemble des évaluations passées, relancez les anciens quiz, observez vos corrections et exportez vos fiches d'étude ou les questionnaires corrigés au format PDF officiel.
-              </p>
-            </div>
-
-            {history.length === 0 ? (
-              <div className="py-16 bg-gray-55 dark:bg-slate-900/50 border border-dashed border-gray-250 dark:border-slate-800 rounded-2xl text-center space-y-4">
-                <BookOpen size={64} className="mx-auto text-gray-200 dark:text-gray-800" />
-                <p className="text-gray-500 dark:text-gray-400 font-medium font-sans">Aucun quiz sauvegardé pour le moment.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {history.map((res) => (
-                  <div key={res.id} className="p-4 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl shadow-xs hover:shadow-md transition-all space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-bold text-base dark:text-white">{res.subjects.join(', ')}</h3>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{formatQuizDate(res.date)} • {res.level}</p>
-                      </div>
-                      <div className={cn(
-                        "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider font-mono",
-                        res.mode === 'Entraînement' ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400" :
-                        res.mode === 'Test' ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400" : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-                      )}>
-                        {res.mode}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl font-black text-faso-green">{res.score}</span>
-                        <span className="text-xs text-gray-400">/ {res.totalQuestions} correct{res.totalQuestions > 1 ? 's' : ''}</span>
-                        <span className={cn(
-                          "ml-2 text-[10px] font-bold px-2 py-0.5 rounded font-mono",
-                          (res.score / res.totalQuestions) >= 0.7 ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"
-                        )}>
-                          {(res.score / res.totalQuestions) >= 0.7 ? "Excellent ✅" : "À réviser ⚠️"}
-                        </span>
-                      </div>
-                      <div className="flex gap-1">
-                        <button 
-                          onClick={() => {
-                            setSubjects(res.subjects);
-                            startQuiz(res.mode);
-                          }}
-                          className="p-2 text-faso-blue hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg cursor-pointer"
-                          title="Générer un nouveau quiz avec ces sujets"
-                        >
-                          <Plus size={18} />
-                        </button>
-                        <button 
-                          onClick={() => generateQuizPDF(res)}
-                          className="p-2 text-faso-blue hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg cursor-pointer"
-                          title="Télécharger le PDF"
-                        >
-                          <Download size={18} />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            isFinishingRef.current = false;
-                            setCurrentQuiz({
-                              id: res.id,
-                              questions: res.questions,
-                              mode: res.mode,
-                              settings: { ...settings, questionCount: res.totalQuestions },
-                              subjects: res.subjects
-                            });
-                            setQuizState({
-                              currentIndex: 0,
-                              userAnswers: new Array(res.questions.length).fill(null),
-                              timeLeft: res.mode === 'Entraînement' ? 119 : 117,
-                              isPaused: false,
-                              isFinished: false,
-                              showFeedback: false,
-                              selectedOption: null
-                            });
-                            setActiveTab(res.mode);
-                          }}
-                          className="p-2 text-faso-green hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg cursor-pointer"
-                          title="Rejouer ce quiz"
-                        >
-                          <Play size={18} fill="currentColor" />
-                        </button>
-                      </div>
                     </div>
                   </div>
                 ))}
@@ -7220,12 +7137,21 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
               setInitialSharedRoomNumber(null);
               setInitialSharedInviteId(null);
             }}
-            onSaveToHistory={(res) => setHistory(prev => [res, ...prev])}
+            onSaveToHistory={(res) => setHistory(prev => {
+              const exists = prev.some(h => h.id === res.id);
+              if (exists) {
+                return prev.map(h => h.id === res.id ? res : h);
+              }
+              return [res, ...prev];
+            })}
             soundEnabled={settings.soundEnabled}
             profile={profile}
             initialSharedRoomNumber={initialSharedRoomNumber}
             initialSharedInviteId={initialSharedInviteId}
             onlineUsers={onlineUsers}
+            initialSubject={arenaInitialSubject}
+            initialLevel={arenaInitialLevel}
+            initialLaunchTrigger={arenaInitialLaunchTrigger}
           />
         )}
         {(activeTab === 'Entraînement' || activeTab === 'Test' || activeTab === 'Concours') && renderQuiz()}

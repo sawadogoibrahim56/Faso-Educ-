@@ -112,6 +112,9 @@ interface CompetitionArenaProps {
   initialSharedRoomNumber?: number | null;
   initialSharedInviteId?: string | null;
   onlineUsers?: any[];
+  initialSubject?: string | null;
+  initialLevel?: Level | null;
+  initialLaunchTrigger?: number | null;
 }
 
 export const CompetitionArena: React.FC<CompetitionArenaProps> = ({ 
@@ -121,7 +124,10 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   profile,
   initialSharedRoomNumber,
   initialSharedInviteId,
-  onlineUsers = []
+  onlineUsers = [],
+  initialSubject = null,
+  initialLevel = null,
+  initialLaunchTrigger = null
 }) => {
   // Stage: 'setup' | 'lobby' | 'active' | 'podium'
   const [stage, setStage] = useState<'setup' | 'lobby' | 'active' | 'podium'>('setup');
@@ -165,6 +171,97 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   const [loadingMessage, setLoadingMessage] = useState<string>("CHARGEMENT DES INFRASTRUCTURES DE L'ARÈNE...");
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const lastInvitationStatusRef = useRef<string>('none');
+
+  // Handle auto-generation from external launch trigger (such as click "Révision" in the Library)
+  useEffect(() => {
+    if (initialLaunchTrigger) {
+      const targetSubject = initialSubject || subject;
+      const targetLevel = initialLevel || level;
+      
+      // Sync local control states to reflect the launch settings in UI inputs
+      setSubject(targetSubject);
+      setLevel(targetLevel);
+      setArenaType('solo');
+      setAiCompetition(false);
+      
+      const performAutoLaunch = async () => {
+        setLoadingQuestions(true);
+        try {
+          const qSettings: QuizSettings = {
+            level: targetLevel,
+            difficulty,
+            questionCount,
+            timePerQuestion: timeLimit,
+            soundEnabled: soundEnabled,
+            aiCompetition: false,
+            aiDifficulty
+          };
+          
+          const generated = await generateQuizQuestions([targetSubject], qSettings);
+          
+          if (generated && generated.length > 0) {
+            const qId = `compe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+            setArenaQuizId(qId);
+            setQuestions(generated);
+            setCurrentQuestionIndex(0);
+            setLeftTime(timeLimit);
+            setStage('active');
+            setUserAnswer(null);
+            // reset user answers
+            const blankAnswers = new Array(generated.length).fill(null);
+            setUserAnswers(blankAnswers);
+            setShowFeedback(false);
+            setIsPaused(false);
+            
+            // Register instantly in library
+            const initialResData = {
+              id: qId,
+              subjects: [`Défi Élite - ${targetSubject}`],
+              date: new Date().toLocaleDateString('fr-FR'),
+              level: targetLevel,
+              score: 0,
+              totalQuestions: generated.length,
+              mode: 'Test',
+              questions: generated,
+              userAnswers: blankAnswers,
+            };
+            onSaveToHistory(initialResData);
+            
+            setParticipants([
+              {
+                id: 'current-user',
+                name: profile.name || "Candidat Élite",
+                avatar: profile.avatar || "👨‍🎓",
+                score: 0,
+                accuracy: 0,
+                speed: 0,
+                status: 'thinking'
+              }
+            ]);
+            
+            setChatMessages([
+              {
+                id: 'system-init',
+                senderName: 'Système',
+                isAI: false,
+                isUser: false,
+                text: `Bienvenue dans votre séance de Révision d'Élite sur le sujet : "${targetSubject}". Donnez le meilleur de vous-même !`,
+                time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+              }
+            ]);
+            
+            playSound('countdown');
+          }
+        } catch (err) {
+          console.error("Auto generation failed:", err);
+        } finally {
+          setLoadingQuestions(false);
+        }
+      };
+      
+      performAutoLaunch();
+    }
+  }, [initialLaunchTrigger]);
 
   // Automated simulation of progress & professional patience messages during QCM launch loading screen
   useEffect(() => {
@@ -233,6 +330,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   const [timeLeft, setLeftTime] = useState<number>(45);
   const [userAnswer, setUserAnswer] = useState<number | null>(null);
   const [userAnswers, setUserAnswers] = useState<(number | null)[]>([]);
+  const [arenaQuizId, setArenaQuizId] = useState<string>('');
   const [showFeedback, setShowFeedback] = useState<boolean>(false);
   const [feedbackTimeLeft, setFeedbackTimeLeft] = useState<number>(8);
   const [isPaused, setIsPaused] = useState<boolean>(false);
@@ -733,15 +831,32 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       const generated = await generateQuizQuestions([subject], qSettings);
       
       if (generated && generated.length > 0) {
+        const qId = `compe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        setArenaQuizId(qId);
         setQuestions(generated);
         setCurrentQuestionIndex(0);
         setLeftTime(timeLimit);
         setStage('active');
         setUserAnswer(null);
         lastSelectedTimeRef.current = null;
-        setUserAnswers(new Array(generated.length).fill(null));
+        const blankAnswers = new Array(generated.length).fill(null);
+        setUserAnswers(blankAnswers);
         setShowFeedback(false);
         setIsPaused(false);
+
+        // Register instantly in library
+        const initialResData = {
+          id: qId,
+          subjects: [`Défi Élite - ${subject}`],
+          date: new Date().toLocaleDateString('fr-FR'),
+          level: level,
+          score: 0,
+          totalQuestions: generated.length,
+          mode: 'Test',
+          questions: generated,
+          userAnswers: blankAnswers,
+        };
+        onSaveToHistory(initialResData);
 
         // Sync to server if multiplayer
         if (isMultiplayer && roomNumber) {
@@ -1074,15 +1189,14 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       setStage('podium');
 
       // Compile and save result to historical database locally
-      const userObj = participants.find(p => p.id === 'current-user');
-      const userCorrectAnswersCount = participants.filter(p => p.id === 'current-user' && p.lastAnswerCorrect).length;
+      const userCorrectAnswersCount = userAnswers.filter((ans, idx) => ans !== null && ans === questions[idx]?.correctAnswer).length;
       
       const resData = {
-        id: `compe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        id: arenaQuizId || `compe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         subjects: [`Défi Élite - ${subject}`],
         date: new Date().toLocaleDateString('fr-FR'),
         level,
-        score: userObj ? userObj.score : 0,
+        score: userCorrectAnswersCount,
         totalQuestions: questions.length,
         mode: 'Test', // Registers under test metrics
         questions,
