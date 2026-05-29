@@ -10,21 +10,19 @@ import fs from "fs";
 
 dotenv.config();
 
+// Run security environmental validations on startup
+import { validateEnvironment } from "./src/server/utils/env.validator";
+import { hashPassword } from "./src/server/utils/bcrypt.utils";
+validateEnvironment();
+
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+import { configuredHelmet, configuredCors } from "./src/server/middleware/security.middleware";
+app.use(configuredHelmet);
+app.use(configuredCors);
 
-// Enable highly permissive native CORS support for cross-origin routing
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
+app.use(express.json());
 
 // Initialize Supabase Client if env is loaded
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
@@ -917,7 +915,9 @@ app.get("/api/profiles/:email", async (req, res) => {
     }
 
     const token = generateToken({ email: prof.email });
-    return res.json({ ...prof, token });
+    const safeProf = { ...prof };
+    delete safeProf.password;
+    return res.json({ ...safeProf, token });
   }
 
   return res.json({ registered: false, email });
@@ -992,6 +992,11 @@ app.post("/api/profiles/sync", async (req, res) => {
         isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
       }
 
+      let syncedPassword = profile.password || "123456";
+      if (!syncedPassword.startsWith("$2a$") && !syncedPassword.startsWith("$2b$") && !syncedPassword.startsWith("$2y$")) {
+        syncedPassword = hashPassword(syncedPassword);
+      }
+
       const safeData: any = {
         email: email,
         name: profile.name,
@@ -1002,7 +1007,7 @@ app.post("/api/profiles/sync", async (req, res) => {
         is_premium: isPremiumStatus,
         points: profile.points || 0,
         learning_streak: profile.learningStreak || 0,
-        password: profile.password || "123456"
+        password: syncedPassword
       };
 
       // Perform standard columns upsert first (guaranteed to succeed on standard schema layout)
@@ -1016,7 +1021,7 @@ app.post("/api/profiles/sync", async (req, res) => {
         if (profile.phone) extraData.phone = profile.phone;
         if (profile.firstName) extraData.first_name = profile.firstName;
         if (profile.lastName) extraData.last_name = profile.lastName;
-        if (profile.password) extraData.password = profile.password;
+        extraData.password = syncedPassword;
 
         if (typeof profile.boundDeviceId !== "undefined") {
           extraData.bound_device_id = profile.boundDeviceId;
@@ -1050,6 +1055,11 @@ app.post("/api/profiles/sync", async (req, res) => {
     isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
   }
 
+  let finalPassword = profile.password || "123456";
+  if (!finalPassword.startsWith("$2a$") && !finalPassword.startsWith("$2b$") && !finalPassword.startsWith("$2y$")) {
+    finalPassword = hashPassword(finalPassword);
+  }
+
   // Sync to memory including all specified registration fields
   serverProfiles[email] = {
     ...serverProfiles[email],
@@ -1057,12 +1067,15 @@ app.post("/api/profiles/sync", async (req, res) => {
     phone: profile.phone || serverProfiles[email]?.phone || "",
     firstName: profile.firstName || serverProfiles[email]?.firstName || "",
     lastName: profile.lastName || serverProfiles[email]?.lastName || "",
+    password: finalPassword,
     isPremium: isPremiumStatus,
     registered: true
   };
   saveLocalDB();
   const token = generateToken({ email });
-  res.json({ success: true, profile: serverProfiles[email], token });
+  const safeProfileResponse = { ...serverProfiles[email] };
+  delete safeProfileResponse.password;
+  res.json({ success: true, profile: safeProfileResponse, token });
 });
 
 app.get("/api/profiles", (req, res) => {
@@ -2139,7 +2152,10 @@ app.post("/api/auth/token-sync", async (req, res) => {
     return res.json({ registered: false, email });
   }
 
-  return res.json({ registered: true, profile: foundProfile, token });
+  const safeProfile = { ...foundProfile };
+  delete safeProfile.password;
+
+  return res.json({ registered: true, profile: safeProfile, token });
 });
 
 // B. Secure Mobile Money credentials parameters dynamic fetch
@@ -2181,167 +2197,10 @@ app.post("/api/admin/login", (req, res) => {
   return res.status(401).json({ error: "Identifiant administrateur ou clé secrète invalide. Accès refusé." });
 });
 
-// B.3. Password Security Recovery System (OTP code & Email reset flow)
-const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
+// B.3. Password Security Recovery System (Supabase Auth Router)
+import authRouter from "./src/server/routes/auth.routes";
+app.use("/api/auth", authRouter);
 
-app.post("/api/auth/forgot-password", async (req, res) => {
-  const email = req.body.email ? req.body.email.trim().toLowerCase() : "";
-  if (!email) {
-    return res.status(400).json({ error: "Veuillez fournir une adresse e-mail valide." });
-  }
-
-  // Check if profile exists
-  let userProfile = serverProfiles[email];
-  if (!userProfile && supabaseAdmin) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from("profiles")
-        .select("*")
-        .eq("email", email)
-        .maybeSingle();
-      if (data) {
-        userProfile = {
-          email: data.email,
-          name: data.name,
-          password: data.password || "123456",
-          registered: true
-        };
-      }
-    } catch (e: any) {
-      console.error("Supabase forgot-password search error:", e.message);
-    }
-  }
-
-  if (!userProfile) {
-    return res.status(444).json({ error: "Aucun compte candidat n'existe avec cette adresse e-mail. Veuillez d'abord vous inscrire." });
-  }
-
-  // Générer un code OTP de secours temporaire de 15 minutes
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  recoveryCodes.set(email, {
-    code: otpCode,
-    expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes limit
-  });
-
-  let supabaseAuthSent = false;
-  let supabaseErrorMsg = "";
-
-  if (supabaseAdmin) {
-    try {
-      // Déterminer l'origine de l'application dynamiquement pour la redirection ou fallback sécurisé
-      const redirectUrl = `${req.headers.origin || 'http://localhost:3000'}/#recovery`;
-      
-      // Appel de la méthode native officielle Supabase Auth sans informations sensibles en dur
-      const { data, error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl
-      });
-
-      if (error) {
-        supabaseErrorMsg = error.message;
-        console.error("❌ Échec de resetPasswordForEmail par Supabase Auth:", error.message);
-      } else {
-        supabaseAuthSent = true;
-        console.info(`⚡ Supabase Auth a déclenché l'envoi de réinitialisation pour : ${email}`);
-      }
-    } catch (err: any) {
-      supabaseErrorMsg = err.message || "Erreur lors de l'appel Supabase Auth";
-      console.error("❌ Exception lors de l'appel à resetPasswordForEmail:", err);
-    }
-  } else {
-    supabaseErrorMsg = "Le client d'administration Supabase n'est pas initialisé sur ce serveur.";
-  }
-
-  if (supabaseAuthSent) {
-    return res.json({
-      success: true,
-      email,
-      code: otpCode, // Code OTP de secours pour assurer la fluidité de l'interface
-      message: "Un e-mail de réinitialisation a été envoyé avec succès par Supabase Auth via votre SMTP configuré."
-    });
-  } else {
-    // Si la configuration Supabase a échoué (par exemple locale sans réseau), on active le mode secours en toute sécurité
-    return res.json({
-      success: true,
-      email,
-      simulation: true,
-      code: otpCode,
-      message: `La tentative d'authentification par Supabase a signalé : "${supabaseErrorMsg}". Mode Secours activé : veuillez utiliser ce code de simulation temporaire : ${otpCode}`
-    });
-  }
-});
-
-app.post("/api/auth/reset-password", async (req, res) => {
-  const { email, code, newPassword } = req.body;
-  if (!email || !code || !newPassword) {
-    return res.status(400).json({ error: "Tous les champs (E-mail, Code d'autorisation, Nouveau mot de passe) sont obligatoires." });
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanCode = code.trim();
-  const cleanPassword = newPassword.trim();
-
-  if (cleanPassword.length < 6) {
-    return res.status(400).json({ error: "Votre nouveau mot de passe doit comporter au moins 6 caractères." });
-  }
-
-  const record = recoveryCodes.get(cleanEmail);
-  if (!record) {
-    return res.status(400).json({ error: "Aucun processus de récupération n'a été initié pourcet e-mail." });
-  }
-
-  if (record.code !== cleanCode) {
-    return res.status(400).json({ error: "Le code d'autorisation OTP saisi est incorrect." });
-  }
-
-  if (record.expiresAt < Date.now()) {
-    recoveryCodes.delete(cleanEmail);
-    return res.status(400).json({ error: "Le code d'autorisation a expiré. Veuillez en générer un nouveau." });
-  }
-
-  // Update password in local and supabase database
-  let success = false;
-  if (supabaseAdmin) {
-    try {
-      const { error } = await supabaseAdmin
-        .from("profiles")
-        .update({ password: cleanPassword })
-        .eq("email", cleanEmail);
-      if (error && error.message && error.message.includes("password")) {
-        console.warn("Falling back db update on profiles table error");
-      } else if (error) {
-        throw error;
-      }
-      success = true;
-    } catch (dbErr: any) {
-      console.error("Supabase password update error, using local:", dbErr.message);
-    }
-  }
-
-  if (serverProfiles[cleanEmail]) {
-    serverProfiles[cleanEmail].password = cleanPassword;
-    success = true;
-  } else {
-    // Initialize profile structure if not in cache
-    serverProfiles[cleanEmail] = {
-      email: cleanEmail,
-      name: cleanEmail.split("@")[0],
-      password: cleanPassword,
-      registered: true,
-      level: "Licence",
-      isPremium: false,
-      registrationDate: new Date().toISOString()
-    };
-    success = true;
-  }
-
-  if (success) {
-    recoveryCodes.delete(cleanEmail);
-    saveLocalDB(); // Persist changes immediately to file!
-    return res.json({ success: true, message: "Félicitations ! Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
-  }
-
-  return res.status(500).json({ error: "Une erreur interne s'est produite lors de l'enregistrement de votre nouveau mot de passe." });
-});
 
 // C. Dynamic Courses syncing & Community/Public directory sharing
 app.get("/api/courses", async (req, res) => {

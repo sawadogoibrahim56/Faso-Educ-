@@ -2779,7 +2779,10 @@ export default function App() {
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regEmail.trim() || !regPassword.trim()) return;
+    if (!regEmail.trim() || !regPassword.trim()) {
+      setAuthError("Veuillez remplir tous les champs.");
+      return;
+    }
     setAuthError(null);
     setIsDeviceLocked(false);
     setLockedEmail('');
@@ -2789,10 +2792,11 @@ export default function App() {
     const lookupKey = regEmail.trim().toLowerCase();
 
     try {
-      const res = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(lookupKey)}?deviceId=${deviceId}`));
+      // First, check device binding through profile verification API
+      const checkRes = await fetch(getApiUrl(`/api/profiles/${encodeURIComponent(lookupKey)}?deviceId=${deviceId}`));
       
-      if (res.status === 403) {
-        const errData = await res.json();
+      if (checkRes.status === 403) {
+        const errData = await checkRes.json();
         if (errData.error === 'device_locked') {
           setAuthError(errData.message);
           setIsDeviceLocked(true);
@@ -2806,38 +2810,30 @@ export default function App() {
         }
       }
 
-      if (res.ok) {
-        const existingProf = await res.json();
-        if (existingProf && existingProf.registered) {
-          const serverPass = existingProf.password || '123456';
-          if (serverPass === regPassword.trim()) {
-            setProfile({
-              registered: true,
-              name: existingProf.name || 'Candidat Élite',
-              firstName: existingProf.firstName || '',
-              lastName: existingProf.lastName || '',
-              email: existingProf.email,
-              phone: existingProf.phone || '',
-              level: existingProf.level || 'Licence',
-              registrationDate: existingProf.registrationDate || new Date().toISOString(),
-              isPremium: !!existingProf.isPremium,
-              simulatedTimeShiftDays: existingProf.simulatedTimeShiftDays || 0,
-              avatar: existingProf.avatar || '👨‍🎓',
-              learningStreak: existingProf.learningStreak || 5,
-              points: existingProf.points || 120,
-              targetExam: existingProf.targetExam || 'Concours Direct',
-              regionName: existingProf.regionName || 'Centre (Ouagadougou)',
-              password: serverPass,
-              boundDeviceId: existingProf.boundDeviceId || deviceId
-            });
-            playSound('finish');
-            return;
-          } else {
-            setAuthError("Mot de passe incorrect !");
-            playSound('wrong');
-            return;
-          }
+      // Secure Server Auth verification
+      const res = await fetch(getApiUrl('/api/auth/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: lookupKey, password: regPassword.trim() })
+      });
+
+      const authData = await res.json();
+      if (!res.ok) {
+        setAuthError(authData.error || authData.message || "Identifiant ou mot de passe incorrect.");
+        playSound('wrong');
+        return;
+      }
+
+      if (res.ok && authData.success) {
+        if (authData.token) {
+          localStorage.setItem('faso_educ_jwt_token', authData.token);
         }
+        setProfile({
+          ...authData.profile,
+          password: regPassword.trim() // client-side fallback only
+        });
+        playSound('finish');
+        return;
       }
     } catch (err) {
       console.warn("Offline fallback for login:", err);
@@ -2849,13 +2845,12 @@ export default function App() {
       try {
         const lp = JSON.parse(localProfStr);
         if (lp && (lp.email?.toLowerCase() === lookupKey || lp.phone?.replace(/\s+/g, "") === lookupKey.replace(/\s+/g, ""))) {
-          const pass = lp.password || '123456';
-          if (pass === regPassword.trim()) {
+          if (lp.password === regPassword.trim()) {
             setProfile({ ...lp, registered: true });
             playSound('finish');
             return;
           } else {
-            setAuthError("Mot de passe incorrect !");
+            setAuthError("Mot de passe incorrect (hors-ligne) !");
             playSound('wrong');
             return;
           }
@@ -2863,7 +2858,7 @@ export default function App() {
       } catch (err) { /* ignore */ }
     }
 
-    setAuthError("Aucun compte trouvé avec cet e-mail ou ce numéro de téléphone. Veuillez vous inscrire d'abord.");
+    setAuthError("Aucun compte trouvé avec cet e-mail ou ce numéro de téléphone, ou erreur réseau.");
     playSound('wrong');
   };
 
@@ -2907,8 +2902,7 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setRecoverySuccess(data.message);
-        setBackupCode(data.code || null);
-        // Switch to reset mode so they can type the OTP code and set password!
+        // Switch to reset mode so they can set their new password!
         setAuthMode('reset');
         playSound('correct');
       } else {
@@ -2925,7 +2919,7 @@ export default function App() {
 
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!recoveryOtp.trim() || !recoveryNewPass.trim() || !recoveryConfirmPass.trim()) {
+    if (!recoveryNewPass.trim() || !recoveryConfirmPass.trim()) {
       setAuthError("Veuillez remplir tous les champs de réinitialisation.");
       return;
     }
@@ -2949,7 +2943,6 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: regEmail.trim().toLowerCase(),
-          code: recoveryOtp.trim(),
           newPassword: recoveryNewPass.trim()
         })
       });
@@ -2965,7 +2958,7 @@ export default function App() {
         setAuthMode('login');
         playSound('correct');
       } else {
-        setAuthError(data.error || "Code de récupération incorrect ou expiré.");
+        setAuthError(data.error || "Une erreur s'est produite lors de la réinitialisation.");
         playSound('wrong');
       }
     } catch (err) {
@@ -3267,27 +3260,7 @@ export default function App() {
           {authMode === 'reset' && (
             <form onSubmit={handleResetPasswordSubmit} className="space-y-4 text-start">
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 mb-3 text-xs text-gray-300 leading-relaxed text-start">
-                Nous avons envoyé un message de récupération à <strong>{regEmail}</strong>. Saisissez le code secret OTP reçu et votre nouveau mot de passe ci-dessous.
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1 uppercase tracking-wider">
-                  Code d'autorisation OTP (6 chiffres)
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={6}
-                  placeholder="Saisissez le code à 6 chiffres"
-                  value={recoveryOtp}
-                  onChange={(e) => setRecoveryOtp(e.target.value)}
-                  className="w-full p-3.5 bg-slate-900 border border-slate-800 rounded-xl focus:border-faso-blue outline-none text-xs text-white text-center font-mono font-bold tracking-[0.4em] text-faso-blue"
-                />
-                {backupCode && (
-                  <div className="mt-2 p-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-lg text-[10px] leading-relaxed font-semibold">
-                    🔑 <strong>Secours :</strong> Si l'e-mail tarde ou est filtré par votre messagerie, vous pouvez utiliser ce code temporaire généré pour votre compte : <span className="text-amber-300 font-mono text-[11px] font-bold select-all bg-amber-950/40 px-1.5 py-0.5 rounded">{backupCode}</span>
-                  </div>
-                )}
+                Nous avons envoyé un e-mail de réinitialisation sécurisé à l'adresse <strong>{regEmail}</strong> via Supabase Auth. Saisissez votre nouveau mot de passe directement ci-dessous pour confirmer d'un clic !
               </div>
 
               <div>
