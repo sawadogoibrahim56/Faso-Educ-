@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     points INTEGER DEFAULT 0,
     learning_streak INTEGER DEFAULT 0,
     is_banned BOOLEAN DEFAULT FALSE,
-    password TEXT DEFAULT '123456',
+    password TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
