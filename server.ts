@@ -609,10 +609,15 @@ app.post("/api/gemini/quiz", async (req, res) => {
       6. STYLE : Langage administratif et pédagogique de type concours.
       7. EXACTITUDE FACTUELLE ABSOLUE : Vérifie chaque fait, date et surnom. Par exemple, Banfora est la "Cité du Paysan Noir" (et non Koudougou qui est la "Cité du Cavalier Rouge"). Toute erreur factuelle est inacceptable pour une préparation de concours.
       8. AUTHENTICITÉ ET VÉRACITÉ : Les questions et réponses doivent être rigoureusement authentiques et vérifiables. Pas d'inventions ou d'approximations.
-      9. INTÉGRATION DES ÉQUATIONS (VITAL) : Si le sujet concerne les mathématiques, les statistiques, l'économie (microéconomie, macroéconomie), la finance ou la comptabilité, intègre de véritables équations de cours écrites au format LaTeX standard (en ligne avec $...$ ou en bloc avec $$...$$). Exemple: la fonction de Cobb-Douglas $Y = A K^\\alpha L^\\beta$, l'élasticité-prix $e_p = \\frac{d Q}{d P} \\times \\frac{P}{Q}$, la variance $\\sigma^2 = \\frac{1}{N} \\sum (x_i - \\mu)^2$. Les explications doivent détailler la démonstration ou l'utilité des équations.
+      9. INTÉGRATION ET RÉDACTION DES ÉQUATIONS LATEX (VITAL - RENDU SÉCURISÉ ET OBLIGATOIRE) :
+         Si le sujet concerne l'économie, la finance, les mathématiques ou les statistiques, intégrez impérativement des formules rédigées en LaTeX standard de très haute qualité :
+         - Utilisez TOUJOURS les commandes LaTeX internationales en anglais. Il est ABSOLUMENT INTERDIT d'écrire 'fraction' ou 'frac' ou 'beta' ou 'alpha' ou 'somme' en toutes lettres sans antislash (vous devez TOUJOURS écrire $\\alpha$, $\\beta$, $\\frac{a}{b}$, $\\sum$, etc.).
+         - CHAQUE variable mathématique, symbole, fraction, indice ou lettre grecque, même isolée dans une phrase (par exemple: $x$, $y$, $\\mu$, $\\sigma$, $\\beta$), DOIT impérativement être entourée de dollars de délimitation ($...$ pour le texte interne et $$...$$ pour les formules isolées).
+         - Évitez absolument d'introduire des mots français ou du texte normal de phrase directement à l'intérieur de blocs mathématiques (par exemple n'écrivez pas $la fraction est ...$).
+         - Utilisez de vrais symboles de multiplication (\\times ou \\cdot) et jamais de lettre 'x' ou '*' à l'intérieur d'un bloc de formule.
       
       ${currentExcludedList.length > 0 ? `10. EXCLUSION STRICTE : Ne répète ABSOLUMENT PAS ces questions déjà traitées : [${currentExcludedList.slice(-80).join(" | ")}]. Propose de NOUVELLES questions de quiz uniques et différentes.` : "10. Explore un large éventail de thématiques pour enrichir la base de connaissances."}
-
+ 
       Retourne un tableau JSON d'objets :
       {
         "text": "La question (avec formules LaTeX $...$ ou $$...$$ si applicable)",
@@ -623,32 +628,64 @@ app.post("/api/gemini/quiz", async (req, res) => {
       }`;
       
       try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  text: { type: Type.STRING },
-                  options: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    minItems: 4,
-                    maxItems: 4
+        let response;
+        try {
+          // Attempt the high-reasoning proactive professional model (Option 2)
+          response = await ai.models.generateContent({
+            model: "gemini-3.1-pro-preview",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    text: { type: Type.STRING },
+                    options: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      minItems: 4,
+                      maxItems: 4
+                    },
+                    correctAnswer: { type: Type.INTEGER },
+                    explanation: { type: Type.STRING },
+                    dimension: { type: Type.STRING, enum: ["Intellectuelle", "Morale", "Mémoire"] }
                   },
-                  correctAnswer: { type: Type.INTEGER },
-                  explanation: { type: Type.STRING },
-                  dimension: { type: Type.STRING, enum: ["Intellectuelle", "Morale", "Mémoire"] }
-                },
-                required: ["text", "options", "correctAnswer", "explanation", "dimension"]
+                  required: ["text", "options", "correctAnswer", "explanation", "dimension"]
+                }
               }
             }
-          }
-        });
+          });
+        } catch (proError: any) {
+          console.warn("⚠️ pro model failed or rate-limited for quiz batch, falling back to gemini-3.5-flash:", proError.message);
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    text: { type: Type.STRING },
+                    options: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      minItems: 4,
+                      maxItems: 4
+                    },
+                    correctAnswer: { type: Type.INTEGER },
+                    explanation: { type: Type.STRING },
+                    dimension: { type: Type.STRING, enum: ["Intellectuelle", "Morale", "Mémoire"] }
+                  },
+                  required: ["text", "options", "correctAnswer", "explanation", "dimension"]
+                }
+              }
+            }
+          });
+        }
         
         const parsedQuestions = JSON.parse(response.text || "[]");
         const validQuestions = Array.isArray(parsedQuestions) ? parsedQuestions : [];
@@ -702,66 +739,168 @@ app.post("/api/gemini/quiz", async (req, res) => {
 app.post("/api/gemini/course", async (req, res) => {
   try {
     const { subject, level } = req.body;
-    const prompt = `Génère un cours académique et professionnel extrêmement rigoureux et complet, adapté pour préparer les concours de la fonction publique au Burkina Faso (catégorie A, conseiller économique, impôts, douane, trésor, statistiques).
+    const prompt = `Génère un plan de cours académique et professionnel extrêmement rigoureux et complet, adapté pour préparer les concours de la fonction publique au Burkina Faso (catégorie A, conseiller économique, impôts, douane, trésor, statistiques).
     Sujet : ${subject}
     Niveau académique attendu : ${level}
 
-    Règles d'or pour la rédaction :
-    1. TON PROFESSIONNEL ET ACADÉMIQUE : Écris comme un chercheur ou professeur d'université d'économie ou de sciences quantitatives. Formulations soignées, définitions étayées et développements profonds.
-    2. ÉQUATIONS MATHÉMATIQUES (CRITIQUE) : Si le sujet s'y prête (économie, finance, statistiques, mathématiques), incluse obligatoirement de véritables formules détaillées et des équations formulées en LaTeX valide :
-       - Utilise $...$ pour les équations ou variables au milieu d'une phrase.
-       - Utilise de grands blocs centrés avec $$...$$ pour les équations majeures.
-       - Exemple : La maximisation sous contrainte de budget s'écrit comme un lagrangien :
-         $$\\mathcal{L}(x, y, \\lambda) = U(x, y) + \\lambda (R - p_x x - p_y y)$$
-       - Démontre l'intuition derrière chaque variable.
-    3. STRUCTURE : Génère 3 chapitres substantiels. Chaque chapitre doit faire au moins 4-5 paragraphes exhaustifs avec des définitions claires, théories de référence, applications concrètes, équations et limites de la théorie économique ou statistique. Inclure des exemples fictifs appliqués au contexte de l'Afrique de l'Ouest ou du Burkina Faso (UEMOA, CEDEAO).
-    
+    Règles de structure :
+    1. CONSTITUTION DU PLAN : Génère un plan exhaustif de 5 à 6 chapitres structurés pour couvrir l'intégralité du sujet demandé.
+    2. RÉDACTION DES SQUELETTES : Pour chaque chapitre, fournis un titre accrocheur et professionnel et un résumé (« summary ») de 2 à 3 lignes décrivant exactement les concepts clés, les modèles ou théories de référence (ex: Solow, Keynes, Pareto, Cobb-Douglas etc.) et les équations mathématiques théoriques qui y seront approfondies.
+    3. CONTENU INITIAL VIDE : Le champ « content » de chaque chapitre doit impérativement être une chaîne de caractères vide "". Il sera généré de manière dynamique sur-demande par le candidat lorsqu'il cliquera dessus.
+
     Retourne UNIQUEMENT un objet JSON conforme à ce schéma :
     {
       "title": "Titre professionnel et complet du cours",
-      "category": "Microéconomie" | "Macroéconomie" | "Statistiques" | "Économie du Développement" | "Finance Publique" | "Mathématiques" | "Droit/Administration",
-      "description": "Un résumé accrocheur et professionnel du cours",
+      "category": "Microéconomie" | "Macroéconomie" | "Statistiques" | "Économie de Développement" | "Finance Publique" | "Mathématiques" | "Droit/Administration",
+      "description": "Un résumé accrocheur, détaillé et professionnel du contenu global et des compétences visées par ce cours",
       "chapters": [
         {
-          "title": "Titre du chapitre 1",
-          "content": "Contenu ultra-complet du chapitre 1 avec les équations LaTeX $ et $$, paragraphes et théories détaillés"
-        },
-        ...
+          "title": "Titre du chapitre",
+          "summary": "Résumé de 2-3 lignes décrivant ce qui sera traité et appris dans ce chapitre",
+          "content": ""
+        }
       ]
     }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            category: { type: Type.STRING },
-            description: { type: Type.STRING },
-            chapters: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  content: { type: Type.STRING }
-                },
-                required: ["title", "content"]
+    let response;
+    try {
+      // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
+      response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              category: { type: Type.STRING },
+              description: { type: Type.STRING },
+              chapters: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    content: { type: Type.STRING }
+                  },
+                  required: ["title", "summary", "content"]
+                }
               }
-            }
-          },
-          required: ["title", "category", "description", "chapters"]
+            },
+            required: ["title", "category", "description", "chapters"]
+          }
         }
-      }
-    });
+      });
+    } catch (proError: any) {
+      console.warn("⚠️ pro model failed or rate-limited for course generation, falling back to gemini-3.5-flash:", proError.message);
+      response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              category: { type: Type.STRING },
+              description: { type: Type.STRING },
+              chapters: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    content: { type: Type.STRING }
+                  },
+                  required: ["title", "summary", "content"]
+                }
+              }
+            },
+            required: ["title", "category", "description", "chapters"]
+          }
+        }
+      });
+    }
 
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
     console.error("Course generation error on server:", error);
     res.status(500).json({ error: error.message || "Failed to generate course" });
+  }
+});
+
+app.post("/api/gemini/course-chapter", async (req, res) => {
+  try {
+    const { courseTitle, courseCategory, chapterTitle, chapterSummary, level, subject } = req.body;
+    
+    const prompt = `Génère le contenu complet, volumineux et académique d'un chapitre d'étude spécifique pour le cours de préparation intensif suivant :
+    Sujet global : ${subject}
+    Nom du cours : ${courseTitle} (Catégorie : ${courseCategory})
+    Niveau d'études requis : ${level}
+    Chapitre à rédiger aujourd'hui : ${chapterTitle}
+    Résumé des concepts & objectifs de ce chapitre : ${chapterSummary}
+
+    Règles d'or pour la rédaction (CRITIQUE pour l'affichage de formules complexes LaTeX en français) :
+    1. PROFONDEUR ET VOLUME D'ÉTUDE : Écris un cours complet de niveau Université/Grandes Écoles (ENAREF, ENAM, Université Joseph Ki-Zerbo). Ne te limite pas à un plan ou un résumé hâtif. Rédige de longs paragraphes d’explications substantielles (au moins 5 à 8 sections et démonstrations pour un total de 800 à 1500 mots) détaillant rigoureusement les concepts clés.
+    2. COHÉRENCE ET EXACTITUDE MATHÉMATIQUE LATEX (RENDU SÉCURISÉ REQUIS) :
+       - Si le sujet s'y prête (économie, finance, statistiques, mathématiques), incluse obligatoirement de véritables formules détaillées et des équations rédigées en LaTeX international valide.
+       - Utilisez de grands blocs centrés avec des doubles dollars $$...$$ pour les équations majeures isolées (ex: $$Y = A K^\\alpha L^\\beta$$).
+       - Utilisez des simples dollars $...$ pour les variables ou petites expressions mathématiques intégrées au texte (ex: la variable $x$ ou le paramètre d'élasticité $\\beta$, la moyenne $\\mu$ ou la variance $\\sigma^2$, etc.).
+       - CHAQUE lettre de variable isolée (ex: $Y$, $A$, $K$, $L$, $p_x$, $x$, $y$) dans vos phrases doit être impérativement encadrée de dollars $...$ pour qu'elle soit rendue proprement comme une expression mathématique au milieu d'un paragraphe.
+       - Utilisez UNIQUEMENT les commandes LaTeX internationales en anglais. Ne traduisez JAMAIS les commandes en français (interdiction absolue d'écrire "fraction" ou "frac" brut sans antislash, utilisez toujours \\frac{numérateur}{dénominateur} pour les fractions). Exemple correct : \\frac{d Q}{d P}, incorrect : fraction{dQ}{dP} ou frac(dQ)(dP).
+       - Précédez TOUJOURS toutes les lettres grecques d'un antislash LaTeX: \\alpha, \\beta, \\lambda, \\mu, \\sigma, \\pi, \\Delta, \\theta, \\gamma (n'écrivez jamais "beta" ou "alpha" brut sous peine de casser le rendu).
+       - Ne mettez jamais de mots français ou de phrases ordinaires directement à l'intérieur de blocs mathématiques.
+       - Utilisez de vrais symboles de multiplication (\\times ou \\cdot) et jamais de lettre 'x' ou '*' à l'intérieur d'un bloc de formule.
+    3. ILLUSTRATIONS CONTEXTUELLES : Intégrez des exemples d'illustrations et des études de cas concrets ou d'analyse économique et financière se rapportant aux réalités burkinabè et ouest-africaines (UEMOA, BCEAO, trésor public du Burkina Faso, statistiques de l'INSD etc.).
+    4. S'ÉVALUER : Terminez le cours par un petit paragraphe de synthèse ou d'interprétation économique/sociale de ces outils.
+
+    Retourne UNIQUEMENT un objet JSON conforme à ce schéma :
+    {
+      "content": "Le texte complet et structuré du chapitre rédigé avec grand soin pédagogique, utilisant un format de Markdown aéré, avec des sous-titres ### et de splendides formules mathématiques complexes rédigées en LaTeX."
+    }`;
+
+    let response;
+    try {
+      // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
+      response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              content: { type: Type.STRING }
+            },
+            required: ["content"]
+          }
+        }
+      });
+    } catch (proError: any) {
+      console.warn("⚠️ pro model failed for chapter content generation, falling back to gemini-3.5-flash:", proError.message);
+      response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              content: { type: Type.STRING }
+            },
+            required: ["content"]
+          }
+        }
+      });
+    }
+
+    res.json(JSON.parse(response.text || "{}"));
+  } catch (error: any) {
+    console.error("Chapter content generation error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate chapter content" });
   }
 });
 
@@ -776,9 +915,10 @@ app.post("/api/gemini/forum", async (req, res) => {
 
     Règles de style et de fond :
     1. TON BIENVEILLANT ET SOPHISTIQUÉ : Encouragez le candidat, écrivez de façon claire, polie et didactique.
-    2. MATHS ET FORMULES (VITAL) : Si la question aborde des notions quantitatives, économiques, fiscales ou statistiques, fournissez des explications mathématiques rigoureuses en LaTeX.
-       - Utilisez $...$ pour les termes mathématiques en ligne.
-       - Utilisez des blocs avec $$...$$ pour les équations majeures.
+    2. MATHS ET FORMULES LATEX (VITAL - RENDU SÉCURISÉ) : Si la question aborde des notions quantitatives, économiques, fiscales ou statistiques, fournissez des explications mathématiques rigoureuses rédigées en LaTeX standard de haute précision.
+       - Utilisez $...$ pour les termes mathématiques en ligne, et des blocs centrés avec des doubles dollars $$...$$ pour les équations majeures isolées.
+       - Utilisez obligatoirement les commandes LaTeX officielles en anglais (ex: \\frac{numérateur}{dénominateur}, interdiction absolue d'écrire "fraction" ou "frac" brut sans antislash).
+       - Précédez TOUJOURS toutes les lettres grecques d'un antislash (ex: \\alpha, \\beta, \\lambda, \\mu, \\sigma, \\pi, \\theta). N'écrivez jamais "beta" ou "alpha" brut sous peine de bloquer l'affichage du navigateur.
     3. CONTEXTE NATIONAL : Faites référence aux bonnes lois administratives voltaïques/burkinabè ou aux réalités ouest-africaines (UEMOA, CEDEAO) si pertinent.
     
     Rédigez directement votre réponse d'expert (environ 2 à 4 paragraphes substantiels). Ne renvoyez pas de JSON, juste du texte brut bien formaté ou contenant des équations LaTeX.`;
@@ -837,7 +977,7 @@ app.get("/api/profiles/:email", async (req, res) => {
           isPremium: data.is_premium,
           points: data.points,
           learningStreak: data.learning_streak,
-          password: data.password || "123456",
+          password: data.password || "",
           registered: true,
           boundDeviceId: data.bound_device_id || null,
           transferRequested: !!data.transfer_requested
@@ -992,11 +1132,6 @@ app.post("/api/profiles/sync", async (req, res) => {
         isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
       }
 
-      let syncedPassword = profile.password || "123456";
-      if (!syncedPassword.startsWith("$2a$") && !syncedPassword.startsWith("$2b$") && !syncedPassword.startsWith("$2y$")) {
-        syncedPassword = hashPassword(syncedPassword);
-      }
-
       const safeData: any = {
         email: email,
         name: profile.name,
@@ -1006,9 +1141,17 @@ app.post("/api/profiles/sync", async (req, res) => {
         avatar: profile.avatar || "👨‍🎓",
         is_premium: isPremiumStatus,
         points: profile.points || 0,
-        learning_streak: profile.learningStreak || 0,
-        password: syncedPassword
+        learning_streak: profile.learningStreak || 0
       };
+
+      let syncedPassword = "";
+      if (profile.password) {
+        syncedPassword = profile.password;
+        if (!syncedPassword.startsWith("$2a$") && !syncedPassword.startsWith("$2b$") && !syncedPassword.startsWith("$2y$")) {
+          syncedPassword = hashPassword(syncedPassword);
+        }
+        safeData.password = syncedPassword;
+      }
 
       // Perform standard columns upsert first (guaranteed to succeed on standard schema layout)
       const { error: baseError } = await supabaseAdmin.from("profiles").upsert(safeData, { onConflict: "email" });
@@ -1021,7 +1164,7 @@ app.post("/api/profiles/sync", async (req, res) => {
         if (profile.phone) extraData.phone = profile.phone;
         if (profile.firstName) extraData.first_name = profile.firstName;
         if (profile.lastName) extraData.last_name = profile.lastName;
-        extraData.password = syncedPassword;
+        if (syncedPassword) extraData.password = syncedPassword;
 
         if (typeof profile.boundDeviceId !== "undefined") {
           extraData.bound_device_id = profile.boundDeviceId;
@@ -1055,11 +1198,6 @@ app.post("/api/profiles/sync", async (req, res) => {
     isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
   }
 
-  let finalPassword = profile.password || "123456";
-  if (!finalPassword.startsWith("$2a$") && !finalPassword.startsWith("$2b$") && !finalPassword.startsWith("$2y$")) {
-    finalPassword = hashPassword(finalPassword);
-  }
-
   // Sync to memory including all specified registration fields
   serverProfiles[email] = {
     ...serverProfiles[email],
@@ -1067,10 +1205,17 @@ app.post("/api/profiles/sync", async (req, res) => {
     phone: profile.phone || serverProfiles[email]?.phone || "",
     firstName: profile.firstName || serverProfiles[email]?.firstName || "",
     lastName: profile.lastName || serverProfiles[email]?.lastName || "",
-    password: finalPassword,
     isPremium: isPremiumStatus,
     registered: true
   };
+
+  if (profile.password) {
+    let finalPassword = profile.password;
+    if (!finalPassword.startsWith("$2a$") && !finalPassword.startsWith("$2b$") && !finalPassword.startsWith("$2y$")) {
+      finalPassword = hashPassword(finalPassword);
+    }
+    serverProfiles[email].password = finalPassword;
+  }
   saveLocalDB();
   const token = generateToken({ email });
   const safeProfileResponse = { ...serverProfiles[email] };
@@ -1852,7 +1997,7 @@ app.get("/api/admin/users", async (req, res) => {
       isPremium: !!p.isPremium || !!p.is_premium,
       points: p.points || 0,
       learningStreak: p.learningStreak || p.learning_streak || 0,
-      password: p.password || "123456",
+      password: p.password || "",
       registered: true,
       boundDeviceId: p.boundDeviceId || null,
       transferRequested: !!p.transferRequested || false,
@@ -1879,7 +2024,7 @@ app.get("/api/admin/users", async (req, res) => {
             isPremium: !!row.is_premium,
             points: row.points || 0,
             learningStreak: row.learning_streak || 0,
-            password: row.password || "123456",
+            password: row.password || "",
             registered: true,
             boundDeviceId: row.bound_device_id || row.boundDeviceId || null,
             transferRequested: !!row.transfer_requested || false,
@@ -2131,7 +2276,7 @@ app.post("/api/auth/token-sync", async (req, res) => {
           points: data.points,
           learningStreak: data.learning_streak,
           registered: true,
-          password: data.password || "123456",
+          password: data.password || "",
           phone: data.phone || "",
           firstName: data.first_name || "",
           lastName: data.last_name || "",
@@ -2156,6 +2301,14 @@ app.post("/api/auth/token-sync", async (req, res) => {
   delete safeProfile.password;
 
   return res.json({ registered: true, profile: safeProfile, token });
+});
+
+// A. Supabase Dynamic connection ready via backend environment configuration fetcher
+app.get("/api/supabase-config", (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
+  });
 });
 
 // B. Secure Mobile Money credentials parameters dynamic fetch

@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Level, Difficulty, QuizMode, Question, QuizSettings, QuizResult, CourseData, ForumPost, ForumReply, UserProfile, ManualPaymentTx } from './types';
-import { generateQuizQuestions, generateCourse, generateForumAIResponse } from './services/geminiService';
+import { generateQuizQuestions, generateCourse, generateForumAIResponse, generateChapterContent } from './services/geminiService';
 import { generateQuizPDF, generateCoursePDF } from './lib/pdfGenerator';
 import { getApiUrl } from './lib/api';
 import { precompiledCourses } from './data/precompiledCourses';
@@ -511,7 +511,8 @@ export default function App() {
   const [customCourseTopic, setCustomCourseTopic] = useState('');
   const [selectedCourseLevel, setSelectedCourseLevel] = useState<Level>('Licence');
   const [isGeneratingCourse, setIsGeneratingCourse] = useState(false);
-  const [courseCategoryFilter, setCourseCategoryFilter] = useState<'Tous' | 'Microéconomie' | 'Macroéconomie' | 'Statistiques' | 'Mathématiques' | 'Personnalisés'>('Tous');
+  const [isGeneratingChapter, setIsGeneratingChapter] = useState(false);
+  const [courseCategoryFilter, setCourseCategoryFilter] = useState<string>('Tous');
   const [generatedCourses, setGeneratedCourses] = useState<CourseData[]>(() => {
     const saved = localStorage.getItem('faso_educ_generated_courses');
     if (!saved) return [];
@@ -1673,6 +1674,125 @@ export default function App() {
     }
   };
 
+  const ensureChapterContent = async (course: CourseData, idx: number) => {
+    const chapter = course.chapters[idx];
+    if (!chapter) return;
+    if (chapter.content && chapter.content.trim().length > 100) return;
+    if (isGeneratingChapter) return;
+
+    setIsGeneratingChapter(true);
+    try {
+      const contentText = await generateChapterContent(
+        course.title,
+        course.category,
+        chapter.title,
+        chapter.summary || '',
+        course.level,
+        course.subject
+      );
+
+      const updatedChapters = course.chapters.map((ch, i) => 
+        i === idx ? { ...ch, content: contentText } : ch
+      );
+
+      const updatedCourse = {
+        ...course,
+        chapters: updatedChapters
+      };
+
+      // Save to generatedCourses
+      setGeneratedCourses(prev => {
+        const exists = prev.some(c => c.id === course.id);
+        if (exists) {
+          return prev.map(c => c.id === course.id ? updatedCourse : c);
+        } else {
+          return [updatedCourse, ...prev];
+        }
+      });
+
+      setSelectedCourse(updatedCourse);
+    } catch (e) {
+      console.error("Error generating chapter content:", e);
+    } finally {
+      setIsGeneratingChapter(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedCourse) {
+      ensureChapterContent(selectedCourse, activeChapterIndex);
+    }
+  }, [selectedCourse?.id, activeChapterIndex]);
+
+  const handleGenerateChapterQuiz = async (course: CourseData, chapterTitle: string) => {
+    setIsGenerating(true);
+    
+    // Check previous questions to avoid repetitions
+    const previousQuestions = history
+      .flatMap(h => h.questions.map(q => q.text))
+      .slice(0, 50);
+
+    const controller = new AbortController();
+    quizAbortControllerRef.current = controller;
+
+    try {
+      const quizSubjects = [`Cours: ${course.title}`, `Chapitre: ${chapterTitle}`];
+      const questions = await generateQuizQuestions(
+        quizSubjects,
+        {
+          level: course.level,
+          difficulty: 'Moyen',
+          questionCount: 5,
+          timePerQuestion: 120,
+          soundEnabled: settings.soundEnabled,
+        },
+        previousQuestions,
+        controller.signal
+      );
+
+      if (questions && questions.length > 0) {
+        const quizId = `res-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        isFinishingRef.current = false;
+        
+        const initialResult: QuizResult = {
+          id: quizId,
+          subjects: quizSubjects,
+          date: new Date().toLocaleDateString('fr-FR'),
+          level: course.level,
+          score: 0,
+          totalQuestions: questions.length,
+          mode: 'Entraînement',
+          questions,
+          userAnswers: new Array(questions.length).fill(null)
+        };
+        
+        setHistory(prev => [initialResult, ...prev]);
+        setCurrentQuiz({
+          id: quizId,
+          questions,
+          mode: 'Entraînement',
+          settings: { ...settings, questionCount: questions.length, timePerQuestion: 120 },
+          subjects: quizSubjects
+        });
+        setQuizState({
+          currentIndex: 0,
+          userAnswers: new Array(questions.length).fill(null),
+          timeLeft: 120,
+          isPaused: false,
+          isFinished: false,
+          showFeedback: false,
+          selectedOption: null
+        });
+        setActiveTab('Entraînement');
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Une erreur est survenue lors de la génération du QCM de ce chapitre.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleToggleCoursePublic = async (course: CourseData) => {
     const updated = { ...course, isPublic: !course.isPublic };
     setGeneratedCourses(prev => prev.map(c => c.id === course.id ? updated : c));
@@ -1811,21 +1931,34 @@ export default function App() {
                 <p className="text-xs text-gray-500 mt-1">Niveau : {selectedCourse.level}</p>
               </div>
               <div className="border-t dark:border-gray-800 my-2 pt-2 space-y-1">
-                {selectedCourse.chapters.map((ch, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setActiveChapterIndex(idx)}
-                    className={cn(
-                      "w-full text-left p-3 rounded-xl font-medium text-sm transition-all flex items-center justify-between",
-                      activeChapterIndex === idx 
-                        ? "bg-faso-blue/10 text-faso-blue border-l-4 border-faso-blue" 
-                        : "hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
-                    )}
-                  >
-                    <span>Chapitre {idx + 1} : {ch.title}</span>
-                    <ChevronRight size={14} className="shrink-0 ml-2 animate-pulse" />
-                  </button>
-                ))}
+                {selectedCourse.chapters.map((ch, idx) => {
+                  const isEmpty = !ch.content || ch.content.trim().length === 0;
+                  const isCurrentGenerating = isGeneratingChapter && activeChapterIndex === idx;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveChapterIndex(idx)}
+                      className={cn(
+                        "w-full text-left p-3 rounded-xl font-medium text-sm transition-all flex flex-col gap-1",
+                        activeChapterIndex === idx 
+                          ? "bg-faso-blue/10 text-faso-blue border-l-4 border-faso-blue" 
+                          : "hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
+                      )}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-bold text-xs">Chapitre {idx + 1}</span>
+                        {isCurrentGenerating ? (
+                          <Loader2 size={12} className="animate-spin text-faso-blue" />
+                        ) : isEmpty ? (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 text-amber-500 rounded font-semibold shrink-0">Squelette 📖</span>
+                        ) : (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 rounded font-semibold shrink-0">Prêt</span>
+                        )}
+                      </div>
+                      <span className="text-xs opacity-85 leading-snug">{ch.title}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1840,14 +1973,57 @@ export default function App() {
                 </h2>
               </div>
 
-              {/* Course Chapter Text Content Renderer */}
-              <div className="prose prose-blue dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed space-y-4">
-                {chapter.content.split('\n\n').map((paragraph, pIdx) => (
-                  <p key={pIdx}>
-                    <MathRenderer text={paragraph} />
-                  </p>
-                ))}
-              </div>
+              {isGeneratingChapter || !chapter.content ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
+                  <div className="relative">
+                    <div className="w-16 h-16 border-4 border-faso-blue/20 border-t-faso-blue rounded-full animate-spin"></div>
+                    <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-faso-blue animate-pulse" size={24} />
+                  </div>
+                  <div className="space-y-2 max-w-md mx-auto">
+                    <h4 className="font-bold text-lg dark:text-white animate-pulse">Génération approfondie du cours...</h4>
+                    <p className="text-xs text-gray-500">
+                      L'IA académique rédige le contenu complet avec des démonstrations rigoureuses et des formules mathématiques de haute qualité au format LaTeX standard.
+                    </p>
+                    {chapter.summary && (
+                      <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800/55 rounded-xl text-left border dark:border-gray-800">
+                        <span className="text-[10px] font-bold text-faso-blue uppercase tracking-wider block mb-1">Concepts ciblés dans ce chapitre :</span>
+                        <p className="text-xs text-gray-700 dark:text-gray-300 italic">« {chapter.summary} »</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Course Chapter Text Content Renderer */}
+                  <div className="prose prose-blue dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed space-y-4">
+                    {chapter.content.split('\n\n').map((paragraph, pIdx) => (
+                      <p key={pIdx}>
+                        <MathRenderer text={paragraph} />
+                      </p>
+                    ))}
+                  </div>
+
+                  {/* Chapter-specific QCM trigger button */}
+                  <div className="mt-8 p-6 bg-gradient-to-tr from-faso-green/5 to-transparent border border-faso-green/20 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="space-y-1 text-center sm:text-left">
+                      <h4 className="font-bold text-sm dark:text-white">Prêt pour l'évaluation ?</h4>
+                      <p className="text-[11px] text-gray-500">Exercez-vous immédiatement à travers un test QCM spécialisé sur ce chapitre.</p>
+                    </div>
+                    <button
+                      onClick={() => handleGenerateChapterQuiz(selectedCourse, chapter.title)}
+                      disabled={isGenerating}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-faso-green text-white font-black text-xs rounded-xl hover:bg-green-600 disabled:opacity-50 transition-all shadow-sm shrink-0 shadow-emerald-500/10"
+                    >
+                      {isGenerating ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <BookOpenCheck size={14} />
+                      )}
+                      Lancer le QCM du chapitre (5 questions)
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Chapter Footer Navigation */}
               <div className="flex justify-between items-center pt-6 border-t dark:border-gray-800">
@@ -1876,9 +2052,7 @@ export default function App() {
     const allCourses = [...precompiledCourses, ...generatedCourses];
     const filteredCourses = courseCategoryFilter === 'Tous' 
       ? allCourses 
-      : courseCategoryFilter === 'Personnalisés' 
-        ? generatedCourses 
-        : allCourses.filter(c => c.category === courseCategoryFilter);
+      : allCourses.filter(c => c.category === courseCategoryFilter);
 
     return (
       <div className="p-6 space-y-8 max-w-4xl mx-auto">
@@ -1960,7 +2134,7 @@ export default function App() {
           </div>
 
           <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none">
-            {(['Tous', 'Microéconomie', 'Macroéconomie', 'Statistiques', 'Personnalisés'] as const).map((cat) => (
+            {['Tous', ...Array.from(new Set(allCourses.map(c => c.category)))].map((cat) => (
               <button
                 key={cat}
                 onClick={() => setCourseCategoryFilter(cat)}
@@ -4367,35 +4541,40 @@ export default function App() {
       return;
     }
 
-    // Verify current password
-    const correctPassword = profile.password || '123456';
-    if (currentPasswordInput !== correctPassword) {
-      setPassError("L'ancien mot de passe est incorrect.");
-      playSound('wrong');
-      return;
-    }
-
-    // Update password in local profile state
-    const updatedProfile = {
-      ...profile,
-      password: newPasswordInput
-    };
-    setProfile(updatedProfile);
-
-    // Save profile to server
+    // Secure server-side password check and update inside Supabase
     try {
-      await fetch(getApiUrl('/api/profiles/sync'), {
+      const res = await fetch(getApiUrl('/api/auth/change-password'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile)
+        body: JSON.stringify({
+          email: profile.email,
+          currentPassword: currentPasswordInput.trim(),
+          newPassword: newPasswordInput.trim()
+        })
       });
-      setPassSuccess("Mot de passe mis à jour avec succès ! Pour votre sécurité, conservez-le précieusement.");
+
+      const resData = await res.json();
+
+      if (!res.ok) {
+        setPassError(resData.error || "Impossible de mettre à jour le mot de passe.");
+        playSound('wrong');
+        return;
+      }
+
+      // Update password locally for cache & offline persistence of current active password session
+      setProfile(prev => ({
+        ...prev,
+        password: newPasswordInput.trim()
+      }));
+
+      setPassSuccess("Mot de passe mis à jour avec succès sur Supabase et synchronisé !");
       playSound('finish');
       setCurrentPasswordInput('');
       setNewPasswordInput('');
     } catch (err) {
-      console.error(err);
-      setPassError("Erreur lors de l'enregistrement, mais conservé localement.");
+      console.error("Change password error:", err);
+      setPassError("Erreur réseau. Impossible de contacter le serveur sécurisé pour modifier votre mot de passe.");
+      playSound('wrong');
     }
   };
 
@@ -6862,7 +7041,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     is_premium BOOLEAN DEFAULT FALSE,
     points INTEGER DEFAULT 0,
     learning_streak INTEGER DEFAULT 0,
-    password TEXT DEFAULT '123456',
+    password TEXT,
     bound_device_id TEXT,
     transfer_requested BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL

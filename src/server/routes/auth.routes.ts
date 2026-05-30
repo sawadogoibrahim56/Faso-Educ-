@@ -212,7 +212,7 @@ router.post("/forgot-password", authSecurityGuard(), async (req: Request, res: R
     }
 
     // 3.2 Dynamic App URL formulation for secure links redirections
-    const originUrl = (req.headers.origin as string) || process.env.APP_URL || "http://localhost:3000";
+    const originUrl = (req.headers.origin as string) || process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:3000";
 
     // 3.3 Trigger Native Password Reset email via Supabase client Auth SDK
     const { success, error } = await sendPasswordResetEmail(email, originUrl);
@@ -276,6 +276,69 @@ router.post("/reset-password", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("❌ Reset password database exception:", err);
     return res.status(500).json({ error: "Impossible de mettre à jour votre mot de passe pour le moment." });
+  }
+});
+
+/**
+ * 5. SECURE PASSWORD CHANGE API (Logged-in user)
+ * Verifies the old password using bcrypt, and updates with new hashed password in Supabase.
+ */
+router.post("/change-password", async (req: Request, res: Response) => {
+  const { email, currentPassword, newPassword } = req.body;
+  if (!email || !currentPassword || !newPassword) {
+    return res.status(400).json({ error: "E-mail, mot de passe actuel et nouveau mot de passe requis." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanCurrent = currentPassword.trim();
+  const cleanNew = newPassword.trim();
+
+  if (cleanNew.length < 6) {
+    return res.status(400).json({ error: "Le nouveau mot de passe doit comporter au moins 6 caractères." });
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Service de base de données hors ligne." });
+  }
+
+  try {
+    // Fetch the user's current password hash
+    const { data: dbUser, error: fetchError } = await supabaseAdmin
+      .from("profiles")
+      .select("password")
+      .eq("email", cleanEmail)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+    if (!dbUser) {
+      return res.status(404).json({ error: "Utilisateur non trouvé." });
+    }
+
+    // Verify current password hash
+    const passwordMatch = comparePassword(cleanCurrent, dbUser.password);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: "L'ancien mot de passe saisi est incorrect." });
+    }
+
+    const hashedNewPassword = hashPassword(cleanNew);
+
+    // Update the password securely inside our user profiles table
+    const { error: updateError } = await supabaseAdmin
+      .from("profiles")
+      .update({ password: hashedNewPassword })
+      .eq("email", cleanEmail);
+
+    if (updateError) throw updateError;
+
+    return res.json({
+      success: true,
+      message: "Mot de passe mis à jour avec succès !"
+    });
+
+  } catch (err: any) {
+    console.error("❌ Change password API exception:", err);
+    return res.status(500).json({ error: "Impossible de modifier le mot de passe pour le moment." });
   }
 });
 

@@ -48,7 +48,7 @@ export async function generateCourse(
   title: string;
   category: string;
   description: string;
-  chapters: { title: string; content: string }[];
+  chapters: { title: string; summary: string; content: string }[];
 }> {
   try {
     const response = await fetch(getApiUrl("/api/gemini/course"), {
@@ -69,6 +69,42 @@ export async function generateCourse(
     return await response.json();
   } catch (error) {
     console.error("Course generation fetch error:", error);
+    throw error;
+  }
+}
+
+export async function generateChapterContent(
+  courseTitle: string,
+  courseCategory: string,
+  chapterTitle: string,
+  chapterSummary: string,
+  level: Level,
+  subject: string
+): Promise<string> {
+  try {
+    const response = await fetch(getApiUrl("/api/gemini/course-chapter"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        courseTitle,
+        courseCategory,
+        chapterTitle,
+        chapterSummary,
+        level,
+        subject
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erreur lors de la génération du chapitre (${response.status})`);
+    }
+    
+    const data = await response.json();
+    return data.content || "";
+  } catch (error) {
+    console.error("Chapter generation fetch error:", error);
     throw error;
   }
 }

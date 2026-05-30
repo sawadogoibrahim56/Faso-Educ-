@@ -49,6 +49,7 @@ export interface CourseData {
   chapters: {
     title: string;
     content: string;
+    summary?: string;
   }[];
   userEmail?: string;
   isPublic?: boolean;
