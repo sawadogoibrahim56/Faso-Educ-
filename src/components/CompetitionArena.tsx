@@ -168,6 +168,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
   // Game Play State
   const [loadingQuestions, setLoadingQuestions] = useState<boolean>(false);
+  const [hostGeneratingQuiz, setHostGeneratingQuiz] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>("CHARGEMENT DES INFRASTRUCTURES DE L'ARÈNE...");
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const lastInvitationStatusRef = useRef<string>('none');
@@ -481,6 +482,9 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
 
             const isCurrentHost = profile?.email?.toLowerCase().trim() === hostEmail.toLowerCase().trim();
             setMultiplayerRole(isCurrentHost ? 'host' : 'invitee');
+
+            // Track if host is generating quiz on the server (excluding host themselves to avoid loading double layout)
+            setHostGeneratingQuiz(!isCurrentHost && !!room.generating);
 
             // In LOBBY stage, monitor acceptances
             if (stage === 'lobby') {
@@ -817,6 +821,23 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
   // Launch the live competition (generate questions & prepare game state)
   const handleLaunchCompetition = async () => {
     setLoadingQuestions(true);
+    
+    // Notify server that host is currently generating QCM questions
+    if (isMultiplayer && roomNumber) {
+      try {
+        await fetch(getApiUrl('/api/competition/room/generating'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomNumber,
+            generating: true
+          })
+        });
+      } catch (err) {
+        console.warn("Error starting generating flag on server:", err);
+      }
+    }
+
     try {
       const qSettings: QuizSettings = {
         level,
@@ -903,6 +924,22 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       alert("Une erreur technique est survenue lors de l'intégration de l'IA.");
     } finally {
       setLoadingQuestions(false);
+      
+      // Safety release of generating state on the server
+      if (isMultiplayer && roomNumber) {
+        try {
+          await fetch(getApiUrl('/api/competition/room/generating'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomNumber,
+              generating: false
+            })
+          });
+        } catch (err) {
+          // silently ignore
+        }
+      }
     }
   };
 
@@ -1469,6 +1506,83 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
     }
     return a.id.localeCompare(b.id);
   });
+
+  if (hostGeneratingQuiz) {
+    return (
+      <div className="fixed inset-0 bg-slate-950/98 z-[9999] flex flex-col items-center justify-center p-6 text-white overflow-hidden select-none">
+        {/* Decorative ambient background glows */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-faso-blue/15 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-faso-green/15 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+        
+        <div className="max-w-md w-full text-center space-y-10 relative">
+          
+          {/* Official Seal / Header */}
+          <div className="space-y-3 animate-fade-in">
+            <span className="text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-500 font-extrabold px-3 py-1 rounded-full uppercase tracking-widest block mx-auto w-fit">
+              ⚔️ EXPÉDITION DUEL EN COHORTES
+            </span>
+            <h2 className="text-xl font-black text-gray-100 font-sans tracking-tight uppercase">
+              SUJET EN COURS DE FORMULATION
+            </h2>
+            <p className="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
+              Veuillez patienter un instant. L'hôte de la session formule et génère actuellement le jeu de QCM d'Élite sur son terminal.
+            </p>
+            <div className="h-[2px] w-24 bg-gradient-to-r from-faso-green via-faso-yellow to-faso-blue mx-auto mt-2" />
+          </div>
+
+          {/* Interactive Rings spinner */}
+          <div className="h-64 flex items-center justify-center relative">
+            <div className="absolute w-52 h-52 border border-slate-800/60 rounded-full animate-spin [animation-duration:15s]" />
+            <div className="absolute w-44 h-44 border border-dashed border-slate-700/30 rounded-full animate-spin [animation-duration:8s] [animation-direction:reverse]" />
+            
+            <div className="relative w-40 h-52 flex items-center justify-center">
+              <div className="absolute w-36 h-48 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl transform -rotate-12 translate-y-3 -translate-x-3 opacity-30 select-none pointer-events-none" />
+              <div className="absolute w-36 h-48 bg-slate-900 border border-slate-800/80 rounded-2xl shadow-xl transform rotate-6 -translate-y-1 translate-x-1 opacity-50 select-none pointer-events-none" />
+              
+              <motion.div
+                animate={{
+                  rotateY: [0, 180, 180, 360],
+                  rotateX: [0, 0, 180, 180],
+                  scale: [1, 1.05, 0.95, 1],
+                  y: [0, -8, 8, 0]
+                }}
+                transition={{
+                  duration: 4.8,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="w-36 h-48 bg-slate-900 border-2 border-faso-green rounded-2xl shadow-2xl flex flex-col justify-between p-4 relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-8 h-8 bg-faso-green/20 rounded-bl-full animate-pulse" />
+                <div className="space-y-1 text-left">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-faso-yellow animate-ping" />
+                    <span className="text-[10px] text-gray-500 font-mono">DUEL ACTIVE</span>
+                  </div>
+                </div>
+                <div className="text-center font-bold text-xs text-faso-green uppercase tracking-wider animate-pulse">
+                  Attente...
+                </div>
+                <div className="text-[9px] text-gray-500 text-left font-mono">
+                  #CODE-{roomNumber}
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-[11px] font-mono tracking-tight text-faso-green bg-faso-green/10 border border-faso-green/20 py-1.5 px-3 rounded-lg mx-auto w-fit flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-faso-green animate-ping" /> Synchronisation du flux de questions en temps réel...
+            </span>
+            <p className="text-[10px] text-gray-500 max-w-xs mx-auto leading-normal">
+              La plateforme restreint strictement toute modification ou régénération frauduleuse pour garantir une équité absolue lors de ce duel Faso-Educ.
+            </p>
+          </div>
+          
+        </div>
+      </div>
+    );
+  }
 
   if (loadingQuestions) {
     return (
@@ -2245,9 +2359,30 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
                     </div>
                   </div>
                   
-                  <span className="text-[10px] bg-green-50 text-green-700 dark:bg-green-950/20 font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0">
-                    <Check size={12} /> Prêt
-                  </span>
+                  {(() => {
+                    const isItemHost = p.id.toLowerCase() === invitedPeerEmail.toLowerCase() || p.name.includes("Hôte");
+                    const isGenerating = loadingQuestions || hostGeneratingQuiz;
+                    if (isGenerating) {
+                      if (isItemHost) {
+                        return (
+                          <span className="text-[10px] bg-amber-50 text-amber-700 dark:bg-amber-950/20 font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" /> Formulation... ⚡
+                          </span>
+                        );
+                      } else {
+                        return (
+                          <span className="text-[10px] bg-blue-50 text-blue-700 dark:bg-blue-950/20 font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Attente Sujet... ⏳
+                          </span>
+                        );
+                      }
+                    }
+                    return (
+                      <span className="text-[10px] bg-green-50 text-green-700 dark:bg-green-950/20 font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0">
+                        <Check size={12} /> Prêt
+                      </span>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

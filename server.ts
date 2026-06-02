@@ -706,12 +706,20 @@ app.post("/api/gemini/quiz", async (req, res) => {
     return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
   }
 
+  const cleanEmail = (userEmail || "").trim().toLowerCase();
+  const prof = cleanEmail ? serverProfiles[cleanEmail] : null;
+  const persistentUserExclusions = prof ? (prof.generatedQuestions || []) : [];
+
   try {
     const accumulatedQuestions: any[] = [];
-    const baseExcludedList = [...(excludeQuestions || [])];
+    const baseExcludedList = [...new Set([
+      ...(excludeQuestions || []),
+      ...persistentUserExclusions
+    ])];
     
-    // We generate in batches of max 15 questions to ensure extreme speed, reliability and prevent JSON/token truncations
-    const batchSize = 15;
+    // We generate in batches to ensure speed and prevent JSON/token truncations.
+    // If the target is <= 35, we do it in a single batch. Otherwise, we do batches of 30, which is extremely fast.
+    const batchSize = totalTarget <= 35 ? totalTarget : 30;
     const totalBatches = Math.ceil(totalTarget / batchSize);
     
     for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
@@ -728,7 +736,7 @@ app.post("/api/gemini/quiz", async (req, res) => {
       Difficulté : ${settings?.difficulty || "Moyen"}
       Numéro du lot : ${batchIdx + 1}/${totalBatches}
       
-      Règles de DIVERSITÉ et de QUALITÉ (CRITIQUE) :
+      Règles de DIVERSITÉ, de CONFORMITÉ et de QUALITÉ (CRITIQUE) :
       1. AUCUNE REDONDANCE : Ne pose pas deux fois la même question ou une question trop similaire à celles passées.
       2. COUVERTURE EXHAUSTIVE : Explore tous les aspects du programme (dates, acteurs clés, concepts, géographie, institutions, culture).
       3. STRUCTURE : 4 choix de réponses (1 correcte + 3 distracteurs crédibles).
@@ -739,15 +747,16 @@ app.post("/api/gemini/quiz", async (req, res) => {
          - Autres : Reste du monde.
       6. STYLE : Langage administratif et pédagogique de type concours.
       7. EXACTITUDE FACTUELLE ABSOLUE : Vérifie chaque fait, date et surnom. Par exemple, Banfora est la "Cité du Paysan Noir" (et non Koudougou qui est la "Cité du Cavalier Rouge"). Toute erreur factuelle est inacceptable pour une préparation de concours.
-      8. AUTHENTICITÉ ET VÉRACITÉ : Les questions et réponses doivent être rigoureusement authentiques et vérifiables. Pas d'inventions ou d'approximations.
-      9. INTÉGRATION ET RÉDACTION DES ÉQUATIONS LATEX (VITAL - RENDU SÉCURISÉ ET OBLIGATOIRE) :
-         Si le sujet concerne l'économie, la finance, les mathématiques ou les statistiques, intégrez impérativement des formules rédigées en LaTeX standard de très haute qualité :
-         - Utilisez TOUJOURS les commandes LaTeX internationales en anglais. Il est ABSOLUMENT INTERDIT d'écrire 'fraction' ou 'frac' ou 'beta' ou 'alpha' ou 'somme' en toutes lettres sans antislash (vous devez TOUJOURS écrire $\\alpha$, $\\beta$, $\\frac{a}{b}$, $\\sum$, etc.).
-         - CHAQUE variable mathématique, symbole, fraction, indice ou lettre grecque, même isolée dans une phrase (par exemple: $x$, $y$, $\\mu$, $\\sigma$, $\\beta$), DOIT impérativement être entourée de dollars de délimitation ($...$ pour le texte interne et $$...$$ pour les formules isolées).
-         - Évitez absolument d'introduire des mots français ou du texte normal de phrase directement à l'intérieur de blocs mathématiques (par exemple n'écrivez pas $la fraction est ...$).
-         - Utilisez de vrais symboles de multiplication (\\times ou \\cdot) et jamais de lettre 'x' ou '*' à l'intérieur d'un bloc de formule.
+      8. CONFORMITÉ TERRITORIALE STRICTE (BURKINA FASO) : Le Burkina Faso compte exactement 45 provinces (et non 30 ou d'autres chiffres obsolètes) et 13 régions administratives d'apprentissage de planification. Assurez-vous que chaque question portant sur la politique ou l'administration ou la géographie du Burkina Faso respecte méticuleusement cette répartition exacte et contemporaine.
+      9. AUTHENTICITÉ ET VÉRACITÉ : Les questions et réponses doivent être rigoureusement authentiques et vérifiables. Pas d'inventions ou d'approximations.
+      10. INTÉGRATION ET RÉDACTION DES ÉQUATIONS LATEX (VITAL - RENDU SÉCURISÉ ET OBLIGATOIRE) :
+          Si le sujet concerne l'économie, la finance, les mathématiques ou les statistiques, intégrez impérativement des formules rédigées en LaTeX standard de très haute qualité :
+          - Utilisez TOUJOURS les commandes LaTeX internationales en anglais. Il est ABSOLUMENT INTERDIT d'écrire 'fraction' ou 'frac' ou 'beta' ou 'alpha' ou 'somme' en toutes lettres sans antislash (vous devez TOUJOURS écrire $\\alpha$, $\\beta$, $\\frac{a}{b}$, $\\sum$, etc.).
+          - CHAQUE variable mathématique, symbole, fraction, indice ou lettre grecque, même isolée dans une phrase (par exemple: $x$, $y$, $\\mu$, $\\sigma$, $\\beta$), DOIT impérativement être entourée de dollars de délimitation ($...$ pour le texte interne et $$...$$ pour les formules isolées).
+          - Évitez absolument d'introduire des mots français ou du texte normal de phrase directement à l'intérieur de blocs mathématiques (par exemple n'écrivez pas $la fraction est ...$).
+          - Utilisez de vrais symboles de multiplication (\\times ou \\cdot) et jamais de lettre 'x' ou '*' à l'intérieur d'un bloc de formule.
       
-      ${currentExcludedList.length > 0 ? `10. EXCLUSION STRICTE : Ne répète ABSOLUMENT PAS ces questions déjà traitées : [${currentExcludedList.slice(-80).join(" | ")}]. Propose de NOUVELLES questions de quiz uniques et différentes.` : "10. Explore un large éventail de thématiques pour enrichir la base de connaissances."}
+      ${currentExcludedList.length > 0 ? `11. EXCLUSION STRICTE : Ne répète ABSOLUMENT PAS ces questions déjà traitées : [${currentExcludedList.slice(-80).join(" | ")}]. Propose de NOUVELLES questions de quiz uniques et différentes.` : "11. Explore un large éventail de thématiques pour enrichir la base de connaissances."}
  
       Retourne un tableau JSON d'objets :
       {
@@ -830,40 +839,39 @@ app.post("/api/gemini/quiz", async (req, res) => {
         const errMsg = err.message || JSON.stringify(err);
         console.warn(`⚠️ Error during batch ${batchIdx + 1} of Gemini quiz generation:`, errMsg);
         
-        // If we already collected some questions, let's gracefully return what we have instead of failing completely!
-        if (accumulatedQuestions.length > 0) {
-          console.info(`Returning ${accumulatedQuestions.length} partially generated quiz questions due to batch generation notice.`);
-          break;
-        }
-        
-        // If first batch fails or no questions yet, activate fallback immediately
-        console.info("🚨 Gemini API quota limit or exception. Activating elite local fallback database...");
-        const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
-        if (!checkResult.isPremium && checkResult.limitRecord) {
-          checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
-          checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
-          saveLocalDB();
-        }
-        return res.json(fallbackQs);
+        // Let's break out of the loop and we will top-off with fallback questions in the step below!
+        break;
       }
     }
     
-    // Safe fallback if loop finished but no questions generated
-    if (accumulatedQuestions.length === 0) {
-      console.info("🚨 Question generation empty loop. Serving fallback questions...");
-      const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
-      if (!checkResult.isPremium && checkResult.limitRecord) {
-        checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
-        checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
-        saveLocalDB();
-      }
-      return res.json(fallbackQs);
+    // SECURE PADDING : If we didn't reach the totalTarget requested (due to network glitch, limits or model issue),
+    // we pad the rest with premium local fallback questions so the user always gets exactly the count they asked for!
+    if (accumulatedQuestions.length < totalTarget) {
+      const delta = totalTarget - accumulatedQuestions.length;
+      console.info(`⚡ Padding remaining ${delta} questions from highly refined fallback database to reach strict requested count of ${totalTarget}.`);
+      const fallbackPadding = getFallbackQuestions(subjects, settings, delta);
+      accumulatedQuestions.push(...fallbackPadding);
     }
     
-    const formattedQuestions = accumulatedQuestions.map((q: any, i: number) => ({
+    const formattedQuestions = accumulatedQuestions.slice(0, totalTarget).map((q: any, i: number) => ({
       ...q,
       id: `q-${i}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
     }));
+
+    // Record persistent exclusions on profile
+    if (prof) {
+      if (!prof.generatedQuestions) prof.generatedQuestions = [];
+      prof.generatedQuestions.push(...formattedQuestions.map(q => q.text));
+      // Keep it up to 1000 items to avoid infinite local JSON growth
+      if (prof.generatedQuestions.length > 1000) {
+        prof.generatedQuestions = prof.generatedQuestions.slice(-1000);
+      }
+
+      // Record administrative activity telemetry
+      prof.totalQcmsGenerated = (prof.totalQcmsGenerated || 0) + 1;
+      prof.totalQuestionsGenerated = (prof.totalQuestionsGenerated || 0) + formattedQuestions.length;
+      saveLocalDB();
+    }
 
     if (!checkResult.isPremium && checkResult.limitRecord) {
       checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
@@ -876,11 +884,15 @@ app.post("/api/gemini/quiz", async (req, res) => {
     console.error("Quiz generation error on server, falling back:", error);
     try {
       const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      if (prof) {
+        prof.totalQcmsGenerated = (prof.totalQcmsGenerated || 0) + 1;
+        prof.totalQuestionsGenerated = (prof.totalQuestionsGenerated || 0) + fallbackQs.length;
+      }
       if (!checkResult.isPremium && checkResult.limitRecord) {
         checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
         checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
-        saveLocalDB();
       }
+      saveLocalDB();
       return res.json(fallbackQs);
     } catch (fallbackError: any) {
       res.status(500).json({ error: fallbackError.message || "Failed to generate fallback quiz questions" });
@@ -1858,6 +1870,7 @@ interface RoomState {
   inviteeName: string;
   questions: any[];
   status: 'lobby' | 'active' | 'podium';
+  generating?: boolean;
   currentQuestionIndex: number;
   answers: RoomAnswers;
   questionStartedAt?: number;
@@ -2039,12 +2052,26 @@ app.post("/api/competition/room/start", (req, res) => {
 
   room.questions = questions;
   room.status = 'active';
+  room.generating = false;
   room.currentQuestionIndex = 0;
   room.questionStartedAt = Date.now();
   room.answers = {
     [room.hostEmail]: {},
     [room.inviteeEmail]: {}
   };
+  room.lastUpdated = Date.now();
+
+  res.json({ success: true, roomState: room });
+});
+
+app.post("/api/competition/room/generating", (req, res) => {
+  const { roomNumber, generating } = req.body;
+  const room = activeRoomStates[Number(roomNumber)];
+  if (!room) {
+    return res.status(404).json({ error: "Salon introuvable." });
+  }
+
+  room.generating = !!generating;
   room.lastUpdated = Date.now();
 
   res.json({ success: true, roomState: room });
