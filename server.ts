@@ -49,6 +49,12 @@ let serverBannedEmails: string[] = ["fraud_spammer@test.bf"];
 let serverProfiles: Record<string, any> = {};
 let serverCourses: any[] = [];
 let serverQuizResults: any[] = [];
+let serverDailyLimits: Record<string, {
+  date: string;
+  quizCount: number;
+  questionsCount: number;
+  courseCount: number;
+}> = {};
 
 const LOCAL_DB_PATH = path.join(process.cwd(), "local_db.json");
 
@@ -62,6 +68,7 @@ function loadLocalDB() {
       if (db.banned) serverBannedEmails = db.banned;
       if (db.courses) serverCourses = db.courses;
       if (db.results) serverQuizResults = db.results;
+      if (db.dailyLimits) serverDailyLimits = db.dailyLimits;
       console.info("💾 [Local DB] Loaded successfully with", Object.keys(serverProfiles).length, "profiles!");
     } else {
       saveLocalDB();
@@ -78,12 +85,131 @@ function saveLocalDB() {
       payments: serverManualPayments,
       banned: serverBannedEmails,
       courses: serverCourses,
-      results: serverQuizResults
+      results: serverQuizResults,
+      dailyLimits: serverDailyLimits
     };
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(db, null, 2), "utf8");
   } catch (err: any) {
     console.error("⚠️ Failed to save local database:", err.message);
   }
+}
+
+async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "course", size: number = 1) {
+  const cleanEmail = (email || "").trim().toLowerCase();
+  
+  if (!cleanEmail) {
+    return { allowed: true, isPremium: false };
+  }
+
+  let prof = serverProfiles[cleanEmail];
+
+  // Récupérer et synchroniser le statut premium et la date via Supabase
+  if (supabaseAdmin) {
+    try {
+      const { data } = await supabaseAdmin
+        .from("profiles")
+        .select("is_premium, registration_date, created_at")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+      if (data) {
+        if (!prof) {
+          prof = {
+            isPremium: !!data.is_premium,
+            registration_date: data.registration_date || data.created_at || new Date().toISOString()
+          };
+          serverProfiles[cleanEmail] = prof;
+        } else {
+          prof.isPremium = !!data.is_premium;
+          if (data.registration_date) {
+            prof.registration_date = data.registration_date;
+          } else if (data.created_at) {
+            prof.registration_date = data.created_at;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Database status check error:", e);
+    }
+  }
+
+  if (!prof) {
+    prof = {
+      isPremium: false,
+      registration_date: new Date().toISOString()
+    };
+    serverProfiles[cleanEmail] = prof;
+  }
+
+  const isPrem = !!prof.isPremium || !!prof.is_premium;
+
+  if (!prof.registration_date) {
+    prof.registration_date = prof.created_at || new Date().toISOString();
+  }
+
+  const regDate = new Date(prof.registration_date);
+  const now = new Date();
+  const diffTime = now.getTime() - regDate.getTime();
+  const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+  // 1. Blocage strict après 7 jours si non premium
+  if (diffDays > 7 && !isPrem) {
+    return {
+      allowed: false,
+      reason: "trial_expired",
+      message: "🔒 Période d'essai expirée : Votre période d'essai gratuite de 7 jours est terminée. Votre compte est suspendu de toutes les fonctionnalités (Cours, QCM, Arène, Publications, Forum). Pour débloquer l'accès complet de façon illimitée, veuillez activer votre abonnement Elite Premium."
+    };
+  }
+
+  if (isPrem) {
+    return { allowed: true, isPremium: true };
+  }
+
+  // 2. Limites quotidiennes pour les utilisateurs gratuits / d'essai
+  const today = new Date().toISOString().split("T")[0];
+  if (!serverDailyLimits[cleanEmail] || serverDailyLimits[cleanEmail].date !== today) {
+    serverDailyLimits[cleanEmail] = {
+      date: today,
+      quizCount: 0,
+      questionsCount: 0,
+      courseCount: 0
+    };
+  }
+
+  const userLimit = serverDailyLimits[cleanEmail];
+
+  if (actionType === "quiz") {
+    if (userLimit.quizCount >= 1 || userLimit.questionsCount >= 5) {
+      return {
+        allowed: false,
+        reason: "limit_exceeded",
+        message: "⚠️ Limite d'essai dépassée : En version d'essai gratuite de 7 jours, vous êtes limité à la génération d'un unique QCM de 5 questions maximum par jour. Abonnez-vous à l'accès Elite Premium pour débloquer la génération illimitée !"
+      };
+    }
+    if (size > 5) {
+      return {
+        allowed: false,
+        reason: "size_exceeded",
+        message: "⚠️ Taille de QCM non autorisée en mode gratuit : Votre QCM d'essai ne peut pas comporter plus de 5 questions. Veuillez sélectionner un maximum de 5 questions ou souscrire à l'abonnement Premium."
+      };
+    }
+    if (userLimit.questionsCount + size > 5) {
+      return {
+        allowed: false,
+        reason: "limit_exceeded",
+        message: `⚠️ Limite d'essai dépassée : Vous avez déjà généré ${userLimit.questionsCount} questions aujourd'hui. Vous ne pouvez pas dépasser un cumul de 5 questions par jour en mode gratuit.`
+      };
+    }
+  } else if (actionType === "course") {
+    if (userLimit.courseCount >= 1) {
+      return {
+        allowed: false,
+        reason: "limit_exceeded",
+        message: "⚠️ Limite d'essai dépassée : Vous avez déjà généré un cours aujourd'hui en version gratuite. Passez à l'abonnement Premium pour débloquer la génération illimitée de tous les cours et chapitres de l'Académie !"
+      };
+    }
+  }
+
+  return { allowed: true, isPremium: false, limitRecord: userLimit };
 }
 
 // Ensure the local database is loaded immediately
@@ -571,9 +697,14 @@ function getFallbackQuestions(subjects: string[], settings: any, totalTarget: nu
 
 // API Routes
 app.post("/api/gemini/quiz", async (req, res) => {
-  const { subjects, settings, excludeQuestions } = req.body;
+  const { subjects, settings, excludeQuestions, userEmail } = req.body;
   const requestedCount = settings?.questionCount || 10;
   const totalTarget = Math.min(100, Math.max(1, requestedCount));
+
+  const checkResult = await checkFreeTrialAndLimits(userEmail, "quiz", totalTarget);
+  if (!checkResult.allowed) {
+    return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+  }
 
   try {
     const accumulatedQuestions: any[] = [];
@@ -708,6 +839,11 @@ app.post("/api/gemini/quiz", async (req, res) => {
         // If first batch fails or no questions yet, activate fallback immediately
         console.info("🚨 Gemini API quota limit or exception. Activating elite local fallback database...");
         const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+        if (!checkResult.isPremium && checkResult.limitRecord) {
+          checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
+          checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
+          saveLocalDB();
+        }
         return res.json(fallbackQs);
       }
     }
@@ -716,6 +852,11 @@ app.post("/api/gemini/quiz", async (req, res) => {
     if (accumulatedQuestions.length === 0) {
       console.info("🚨 Question generation empty loop. Serving fallback questions...");
       const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      if (!checkResult.isPremium && checkResult.limitRecord) {
+        checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
+        checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
+        saveLocalDB();
+      }
       return res.json(fallbackQs);
     }
     
@@ -723,12 +864,23 @@ app.post("/api/gemini/quiz", async (req, res) => {
       ...q,
       id: `q-${i}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
     }));
+
+    if (!checkResult.isPremium && checkResult.limitRecord) {
+      checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
+      checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + formattedQuestions.length;
+      saveLocalDB();
+    }
     
     return res.json(formattedQuestions);
   } catch (error: any) {
     console.error("Quiz generation error on server, falling back:", error);
     try {
       const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      if (!checkResult.isPremium && checkResult.limitRecord) {
+        checkResult.limitRecord.quizCount = (checkResult.limitRecord.quizCount || 0) + 1;
+        checkResult.limitRecord.questionsCount = (checkResult.limitRecord.questionsCount || 0) + fallbackQs.length;
+        saveLocalDB();
+      }
       return res.json(fallbackQs);
     } catch (fallbackError: any) {
       res.status(500).json({ error: fallbackError.message || "Failed to generate fallback quiz questions" });
@@ -738,7 +890,13 @@ app.post("/api/gemini/quiz", async (req, res) => {
 
 app.post("/api/gemini/course", async (req, res) => {
   try {
-    const { subject, level } = req.body;
+    const { subject, level, userEmail } = req.body;
+
+    const checkResult = await checkFreeTrialAndLimits(userEmail, "course", 1);
+    if (!checkResult.allowed) {
+      return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+    }
+
     const prompt = `Génère un plan de cours académique et professionnel extrêmement rigoureux et complet, adapté pour préparer les concours de la fonction publique au Burkina Faso (catégorie A, conseiller économique, impôts, douane, trésor, statistiques).
     Sujet : ${subject}
     Niveau académique attendu : ${level}
@@ -825,6 +983,11 @@ app.post("/api/gemini/course", async (req, res) => {
       });
     }
 
+    if (!checkResult.isPremium && checkResult.limitRecord) {
+      checkResult.limitRecord.courseCount = (checkResult.limitRecord.courseCount || 0) + 1;
+      saveLocalDB();
+    }
+
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
     console.error("Course generation error on server:", error);
@@ -834,7 +997,12 @@ app.post("/api/gemini/course", async (req, res) => {
 
 app.post("/api/gemini/course-chapter", async (req, res) => {
   try {
-    const { courseTitle, courseCategory, chapterTitle, chapterSummary, level, subject } = req.body;
+    const { courseTitle, courseCategory, chapterTitle, chapterSummary, level, subject, userEmail } = req.body;
+    
+    const checkResult = await checkFreeTrialAndLimits(userEmail, "course", 1);
+    if (!checkResult.allowed && checkResult.reason === "trial_expired") {
+      return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+    }
     
     const prompt = `Génère le contenu complet, volumineux et académique d'un chapitre d'étude spécifique pour le cours de préparation intensif suivant :
     Sujet global : ${subject}
@@ -906,7 +1074,12 @@ app.post("/api/gemini/course-chapter", async (req, res) => {
 
 app.post("/api/gemini/forum", async (req, res) => {
   try {
-    const { postTitle, postContent } = req.body;
+    const { postTitle, postContent, userEmail } = req.body;
+    
+    const checkResult = await checkFreeTrialAndLimits(userEmail, "course", 1);
+    if (!checkResult.allowed && checkResult.reason === "trial_expired") {
+      return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+    }
     const prompt = `Vous êtes un Professeur / Expert académique éminent d'Afrique de l'Ouest, spécialisé dans la préparation des candidats aux concours directs de la fonction publique au Burkina Faso (ENAM, Douanes, Trésor, Conseillers Économiques, Impôts, Statistiques).
     Vous répondez à une question d'un candidat sur le forum de révision.
 
@@ -1021,6 +1194,17 @@ app.get("/api/profiles/:email", async (req, res) => {
   if (prof) {
     // DEVICE BINDING RULE: 1 Compte = 1 Téléphone
     if (deviceId) {
+      // 1. One telephone cannot be used for multiple separate accounts:
+      const otherProfWithDevice = Object.values(serverProfiles).find(p => p.email && p.email !== email && p.boundDeviceId === deviceId);
+      if (otherProfWithDevice) {
+        return res.status(403).json({
+          error: "device_limit_exceeded",
+          message: `🔒 ALERTE DE SÉCURITÉ : Ce terminal mobile est déjà lié à un autre compte (${otherProfWithDevice.email}). L'utilisation d'un même téléphone pour gérer plusieurs comptes est désactivée pour lutter contre la fraude. Veuillez faire une demande de transfert d'appareil ou contacter l'administration.`,
+          boundDeviceId: otherProfWithDevice.boundDeviceId,
+          transferRequested: !!prof.transferRequested
+        });
+      }
+
       if (!prof.boundDeviceId) {
         // Link device for first connection
         prof.boundDeviceId = deviceId;
@@ -1101,6 +1285,17 @@ app.post("/api/profiles/sync", async (req, res) => {
 
   if (!email) {
     return res.status(400).json({ error: "Missing email in profile" });
+  }
+
+  // 1. One telephone cannot be used for multiple separate accounts:
+  if (clientDeviceId) {
+    const otherProfWithDevice = Object.values(serverProfiles).find(p => p.email && p.email !== email && p.boundDeviceId === clientDeviceId);
+    if (otherProfWithDevice) {
+      return res.status(403).json({
+        error: "device_limit_exceeded",
+        message: `🔒 ALERTE DE SÉCURITÉ : Ce terminal mobile est déjà lié à un autre compte (${otherProfWithDevice.email}). L'utilisation d'un même téléphone pour gérer plusieurs comptes est désactivée pour lutter contre la fraude. Veuillez faire une demande de transfert d'appareil ou contacter l'administration.`
+      });
+    }
   }
 
   // Check if banned
@@ -1491,9 +1686,9 @@ app.post("/api/payments/auto-pay", async (req, res) => {
       gatewayMessage = "Échec : L'intégration Moov Money est en attente de signature de votre contrat marchand.";
     } else {
       // Standard carrier parameters are not configured in .env yet
-      // We authorize mock inputs for all candidates to test simulation mode!
-      transactionSucceeded = true;
-      gatewayMessage = `Transaction de simulation validée avec succès. Accès Elite Premium activé pour ${operator === 'orange' ? 'Orange Money' : 'Moov Money'}.`;
+      // Block automatic validation since keys are not set, prompting user to use manual payment upload instead of auto-approving.
+      transactionSucceeded = false;
+      gatewayMessage = "⚠️ Passerelle de validation automatique inactive / en maintenance : Impossible de vérifier l'OTP car les identifiants marchands d'intégration réseau (API Keys) de l'opérateur ne sont pas encore entièrement paramétrés par l'administrateur. Veuillez faire une demande en mode manuel (Dépôt direct) pour activation immédiate par l'administration.";
     }
 
     if (!transactionSucceeded) {
@@ -2359,6 +2554,13 @@ app.use("/api/auth", authRouter);
 app.get("/api/courses", async (req, res) => {
   const userEmail = req.query.email ? (req.query.email as string).trim().toLowerCase() : "";
   
+  if (userEmail) {
+    const checkResult = await checkFreeTrialAndLimits(userEmail, "course", 1);
+    if (!checkResult.allowed && checkResult.reason === "trial_expired") {
+      return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+    }
+  }
+  
   if (supabaseAdmin) {
     try {
       const { data, error } = await supabaseAdmin.from("courses").select("*");
@@ -2395,6 +2597,13 @@ app.post("/api/courses", async (req, res) => {
   }
   
   const userEmail = course.userEmail ? course.userEmail.trim().toLowerCase() : "";
+  if (userEmail) {
+    const checkResult = await checkFreeTrialAndLimits(userEmail, "course", 1);
+    if (!checkResult.allowed && checkResult.reason === "trial_expired") {
+      return res.status(403).json({ error: checkResult.reason, message: checkResult.message });
+    }
+  }
+  
   const cleanCourse = {
     id: course.id,
     userEmail: userEmail,

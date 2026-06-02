@@ -389,8 +389,8 @@ export default function App() {
         
         if (res.status === 403 && isActive) {
           const errData = await res.json();
-          if (errData.error === 'device_locked') {
-            alert("⚠️ Accès déconnecté : Ce compte candidat est maintenant synchronisé et actif sur un autre appareil mobile.");
+          if (errData.error === 'device_locked' || errData.error === 'device_limit_exceeded') {
+            alert(errData.message || "⚠️ Accès déconnecté : Ce compte candidat est maintenant synchronisé et actif sur un autre appareil mobile.");
             // Log out user
             setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
             localStorage.removeItem('faso_educ_jwt_token');
@@ -673,12 +673,11 @@ export default function App() {
     const timePerQ = mode === 'Entraînement' ? 119 : mode === 'Test' ? 117 : 105;
     const count = settings.questionCount;
     
-    // Récupérer les questions déjà posées pour ces sujets pour éviter les répétitions
+    // Récupérer la totalité des questions déjà posées de tout l'historique pour éviter strictement toute répétition
     const previousQuestions = history
-      .filter(h => h && h.subjects && Array.isArray(h.questions) && h.subjects.some(s => currentSubjects.includes(s)))
       .flatMap(h => h.questions.map(q => q ? q.text : ""))
       .filter(Boolean)
-      .slice(0, 80); // Augmenté à 80 pour une meilleure diversité sur le long terme
+      .slice(0, 150); // Garantie complète sans aucune répétition de thèmes croisés
 
     const controller = new AbortController();
     quizAbortControllerRef.current = controller;
@@ -688,7 +687,7 @@ export default function App() {
         ...settings,
         questionCount: count,
         timePerQuestion: timePerQ
-      }, previousQuestions, controller.signal);
+      }, previousQuestions, profile.email, controller.signal);
 
       if (questions && questions.length > 0) {
         const quizId = `res-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1641,7 +1640,7 @@ export default function App() {
     if (!customCourseTopic.trim()) return;
     setIsGeneratingCourse(true);
     try {
-      const newC = await generateCourse(customCourseTopic, selectedCourseLevel);
+      const newC = await generateCourse(customCourseTopic, selectedCourseLevel, profile.email);
       const withId: CourseData = {
         ...newC,
         id: `course-custom-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -1688,7 +1687,8 @@ export default function App() {
         chapter.title,
         chapter.summary || '',
         course.level,
-        course.subject
+        course.subject,
+        profile.email
       );
 
       const updatedChapters = course.chapters.map((ch, i) => 
@@ -1747,6 +1747,7 @@ export default function App() {
           soundEnabled: settings.soundEnabled,
         },
         previousQuestions,
+        profile.email,
         controller.signal
       );
 
@@ -1831,6 +1832,7 @@ export default function App() {
           soundEnabled: settings.soundEnabled,
         },
         previousQuestions,
+        profile.email,
         controller.signal
       );
 
@@ -2276,7 +2278,7 @@ export default function App() {
     let updatedReplies: ForumReply[] = [];
     if (askAIAfterCreation) {
       try {
-        const aiAnswer = await generateForumAIResponse(newThreadTitle, newThreadContent);
+        const aiAnswer = await generateForumAIResponse(newThreadTitle, newThreadContent, profile.email);
         updatedReplies.push({
           id: `reply-ai-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           author: 'Professeur Émérite (IA)',
@@ -2349,7 +2351,7 @@ export default function App() {
 
     setIsGeneratingAIComment(true);
     try {
-      const aiReplyText = await generateForumAIResponse(post.title, post.content);
+      const aiReplyText = await generateForumAIResponse(post.title, post.content, profile.email);
       const aiReply: ForumReply = {
         id: `reply-ai-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         author: 'Professeur Émérite (IA)',
@@ -2937,11 +2939,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...newProfile, deviceId })
       });
-      if (syncRes.ok) {
-        const syncData = await syncRes.json();
-        if (syncData.token) {
-          localStorage.setItem('faso_educ_jwt_token', syncData.token);
-        }
+      if (!syncRes.ok) {
+        const syncErrData = await syncRes.json();
+        setAuthError(syncErrData.message || syncErrData.error || "Erreur de synchronisation avec le serveur. Ce terminal est probablement déjà associé à un autre compte.");
+        playSound('wrong');
+        return;
+      }
+      const syncData = await syncRes.json();
+      if (syncData.token) {
+        localStorage.setItem('faso_educ_jwt_token', syncData.token);
       }
     } catch (e) {
       console.warn("Direct backend registration sync failed, using local storage state:", e);
@@ -2971,10 +2977,10 @@ export default function App() {
       
       if (checkRes.status === 403) {
         const errData = await checkRes.json();
-        if (errData.error === 'device_locked') {
+        if (errData.error === 'device_locked' || errData.error === 'device_limit_exceeded') {
           setAuthError(errData.message);
           setIsDeviceLocked(true);
-          setLockedEmail(errData.boundDeviceId || lookupKey);
+          setLockedEmail(lookupKey);
           playSound('wrong');
           return;
         } else if (errData.error === 'banned') {
@@ -7276,37 +7282,76 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto pb-24">
-        {activeTab === 'Accueil' && renderHome()}
-        {activeTab === 'Historique' && renderHistory()}
-        {activeTab === 'Cours' && renderCourses()}
-        {activeTab === 'Forum' && renderForum()}
-        {activeTab === 'Paiement' && renderPaiement()}
-        {activeTab === 'Espace' && renderEspace()}
-        {activeTab === 'Competition' && (
-          <CompetitionArena 
-            onBack={() => {
-              setActiveTab('Accueil');
-              setInitialSharedRoomNumber(null);
-              setInitialSharedInviteId(null);
-            }}
-            onSaveToHistory={(res) => setHistory(prev => {
-              const exists = prev.some(h => h.id === res.id);
-              if (exists) {
-                return prev.map(h => h.id === res.id ? res : h);
-              }
-              return [res, ...prev];
-            })}
-            soundEnabled={settings.soundEnabled}
-            profile={profile}
-            initialSharedRoomNumber={initialSharedRoomNumber}
-            initialSharedInviteId={initialSharedInviteId}
-            onlineUsers={onlineUsers}
-            initialSubject={arenaInitialSubject}
-            initialLevel={arenaInitialLevel}
-            initialLaunchTrigger={arenaInitialLaunchTrigger}
-          />
+        {isTrialExpired() && activeTab !== 'Paiement' ? (
+          <div id="trial-expired-panel-lock" className="max-w-xl mx-auto my-12 p-8 bg-white dark:bg-gray-950 border border-red-200 dark:border-red-950/40 rounded-3xl shadow-2xl flex flex-col items-center justify-center text-center space-y-6">
+            <div className="w-20 h-20 bg-rose-50 dark:bg-rose-950/30 text-rose-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
+              <ShieldAlert size={36} />
+            </div>
+            <div className="space-y-2 animate-pulse">
+              <h2 className="text-2xl font-black text-gray-950 dark:text-white">Période d'essai d'Académie expirée ! 🇧🇫</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Votre période d'essai gratuit de 7 jours est terminée. Conformément aux règles académiques de Faso Educ, l'accès à l'Académie, à l'Arène live, au Forum et à la Bibliothèque est désormais verrouillé.
+              </p>
+            </div>
+            <div className="w-full text-left p-5 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-2 text-xs text-gray-600 dark:text-gray-400">
+              <p className="font-bold text-gray-800 dark:text-gray-300">🔓 Débloquez immédiatement l'Accès Premium Elite :</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Génération illimitée de QCM d'entraînement par IA</li>
+                <li>Rapports de correction pédagogique approfondis en PDF</li>
+                <li>Arène de duel et concours blanc national en direct</li>
+                <li>Forum d'entraide communautaire et toutes publications</li>
+                <li>Validation instantanée de votre abonnement</li>
+              </ul>
+            </div>
+            <button
+              onClick={() => {
+                setActiveTab('Paiement');
+                playSound('correct');
+              }}
+              className="w-full py-4 bg-faso-green hover:bg-emerald-600 text-white font-extrabold text-sm rounded-2xl shadow-lg transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <CreditCard size={18} />
+              <span>S'abonner & Activer l'Accès Premium Elite</span>
+            </button>
+            <p className="text-[10px] text-gray-400">
+              Assistance technique instantanée. Processus de signature 100% sécurisé et certifié d'Orange ou Moov Money.
+            </p>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'Accueil' && renderHome()}
+            {activeTab === 'Historique' && renderHistory()}
+            {activeTab === 'Cours' && renderCourses()}
+            {activeTab === 'Forum' && renderForum()}
+            {activeTab === 'Paiement' && renderPaiement()}
+            {activeTab === 'Espace' && renderEspace()}
+            {activeTab === 'Competition' && (
+              <CompetitionArena 
+                onBack={() => {
+                  setActiveTab('Accueil');
+                  setInitialSharedRoomNumber(null);
+                  setInitialSharedInviteId(null);
+                }}
+                onSaveToHistory={(res) => setHistory(prev => {
+                  const exists = prev.some(h => h.id === res.id);
+                  if (exists) {
+                    return prev.map(h => h.id === res.id ? res : h);
+                  }
+                  return [res, ...prev];
+                })}
+                soundEnabled={settings.soundEnabled}
+                profile={profile}
+                initialSharedRoomNumber={initialSharedRoomNumber}
+                initialSharedInviteId={initialSharedInviteId}
+                onlineUsers={onlineUsers}
+                initialSubject={arenaInitialSubject}
+                initialLevel={arenaInitialLevel}
+                initialLaunchTrigger={arenaInitialLaunchTrigger}
+              />
+            )}
+            {(activeTab === 'Entraînement' || activeTab === 'Test' || activeTab === 'Concours') && renderQuiz()}
+          </>
         )}
-        {(activeTab === 'Entraînement' || activeTab === 'Test' || activeTab === 'Concours') && renderQuiz()}
       </main>
 
       {/* Settings Modal */}

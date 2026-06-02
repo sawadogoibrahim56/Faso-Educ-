@@ -5,6 +5,7 @@ export async function generateQuizQuestions(
   subjects: string[],
   settings: QuizSettings,
   excludeQuestions: string[] = [],
+  userEmail: string = "",
   signal?: AbortSignal
 ): Promise<Question[]> {
   try {
@@ -16,7 +17,8 @@ export async function generateQuizQuestions(
       body: JSON.stringify({
         subjects,
         settings,
-        excludeQuestions
+        excludeQuestions,
+        userEmail
       }),
       signal
     });
@@ -43,7 +45,8 @@ export async function generateQuizQuestions(
 
 export async function generateCourse(
   subject: string,
-  level: Level
+  level: Level,
+  userEmail: string = ""
 ): Promise<{
   title: string;
   category: string;
@@ -58,12 +61,19 @@ export async function generateCourse(
       },
       body: JSON.stringify({
         subject,
-        level
+        level,
+        userEmail
       })
     });
     
     if (!response.ok) {
-      throw new Error(`Erreur lors de la génération du cours (${response.status})`);
+      let errMsg = `Erreur lors de la génération du cours (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.message) errMsg = errJson.message;
+        else if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (e) {}
+      throw new Error(errMsg);
     }
     
     return await response.json();
@@ -79,7 +89,8 @@ export async function generateChapterContent(
   chapterTitle: string,
   chapterSummary: string,
   level: Level,
-  subject: string
+  subject: string,
+  userEmail: string = ""
 ): Promise<string> {
   try {
     const response = await fetch(getApiUrl("/api/gemini/course-chapter"), {
@@ -93,12 +104,19 @@ export async function generateChapterContent(
         chapterTitle,
         chapterSummary,
         level,
-        subject
+        subject,
+        userEmail
       })
     });
     
     if (!response.ok) {
-      throw new Error(`Erreur lors de la génération du chapitre (${response.status})`);
+      let errMsg = `Erreur lors de la génération du chapitre (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.message) errMsg = errJson.message;
+        else if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (e) {}
+      throw new Error(errMsg);
     }
     
     const data = await response.json();
@@ -111,7 +129,8 @@ export async function generateChapterContent(
 
 export async function generateForumAIResponse(
   postTitle: string,
-  postContent: string
+  postContent: string,
+  userEmail: string = ""
 ): Promise<string> {
   try {
     const response = await fetch(getApiUrl("/api/gemini/forum"), {
@@ -121,12 +140,19 @@ export async function generateForumAIResponse(
       },
       body: JSON.stringify({
         postTitle,
-        postContent
+        postContent,
+        userEmail
       })
     });
     
     if (!response.ok) {
-      throw new Error(`Erreur lors de la réponse du forum (${response.status})`);
+      let errMsg = `Erreur lors de la réponse du forum (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.message) errMsg = errJson.message;
+        else if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (e) {}
+      throw new Error(errMsg);
     }
     
     const data = await response.json();
