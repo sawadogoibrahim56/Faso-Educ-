@@ -445,6 +445,9 @@ export default function App() {
 
   // Helper calculation for trial days
   const getTrialDaysRemaining = (): number => {
+    if (profile.email && profile.email.trim().toLowerCase() === "ibrahimsawadogo36@gmail.com") {
+      return 999;
+    }
     if (!profile.registrationDate) return 7;
     const regDate = new Date(profile.registrationDate);
     if (isNaN(regDate.getTime())) return 7;
@@ -457,6 +460,9 @@ export default function App() {
   };
 
   const isTrialExpired = (): boolean => {
+    if (profile.email && profile.email.trim().toLowerCase() === "ibrahimsawadogo36@gmail.com") {
+      return false;
+    }
     return !profile.isPremium && getTrialDaysRemaining() <= 0;
   };
 
@@ -3552,7 +3558,7 @@ export default function App() {
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [dbDiagnosis, setDbDiagnosis] = useState<any>(null);
   const [isLoadingDiagnosis, setIsLoadingDiagnosis] = useState<boolean>(false);
-  const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'premium' | 'pending' | 'trial' | 'expired'>('all');
+  const [adminUserFilter, setAdminUserFilter] = useState<'all' | 'premium' | 'transfer' | 'pending' | 'trial' | 'expired'>('all');
   const [paymentAlertMessage, setPaymentAlertMessage] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -3811,6 +3817,12 @@ export default function App() {
       setIsLoadingDiagnosis(false);
     }
   };
+
+  useEffect(() => {
+    if (isAdminUnlocked) {
+      fetchAdminUsers();
+    }
+  }, [isAdminUnlocked]);
 
   useEffect(() => {
     if (showAdminModal && isAdminUnlocked) {
@@ -4920,10 +4932,19 @@ export default function App() {
                     className="px-5 py-3 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-2 border border-slate-200"
                   >
                     <span>Ouvrir l'Espace Administration ⚙️</span>
-                    {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
-                      <span className="px-2.5 py-1 bg-red-600 text-white text-[10px] rounded-full font-black animate-pulse">
-                        {manualPayments.filter(tx => tx.status === 'pending').length} transaction(s) en attente
-                      </span>
+                    {(manualPayments.filter(tx => tx.status === 'pending').length > 0 || adminUsers.filter(u => u.transferRequested).length > 0) && (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
+                          <span className="px-2.5 py-1 bg-red-600 text-white text-[10px] rounded-full font-black animate-pulse">
+                            {manualPayments.filter(tx => tx.status === 'pending').length} transaction(s) en attente
+                          </span>
+                        )}
+                        {adminUsers.filter(u => u.transferRequested).length > 0 && (
+                          <span className="px-2.5 py-1 bg-amber-500 text-white text-[10px] rounded-full font-black animate-pulse">
+                            {adminUsers.filter(u => u.transferRequested).length} transfert(s) d'appareil
+                          </span>
+                        )}
+                      </div>
                     )}
                   </button>
                 </div>
@@ -6215,6 +6236,31 @@ export default function App() {
       }
     };
 
+    const handleApproveTransferAction = async (emailToApprove: string) => {
+      const cleanEmail = emailToApprove.trim().toLowerCase();
+      if (!cleanEmail) return;
+
+      if (confirm(`Voulez-vous autoriser le transfert d'appareil mobile pour le candidat ${cleanEmail} et détacher son ancien appareil ?`)) {
+        playSound('correct');
+        try {
+          const res = await fetch(getApiUrl('/api/admin/reset-device'), {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('faso_educ_admin_token') || ''}`
+            },
+            body: JSON.stringify({ email: cleanEmail })
+          });
+          if (res.ok) {
+            alert(`L'autorisation de transfert d'appareil mobile pour le candidat ${cleanEmail} a été validée avec succès !`);
+            fetchAdminUsers();
+          }
+        } catch (e) {
+          console.warn("Offline fallback for approving transfer:", e);
+        }
+      }
+    };
+
     const handleDeclineTransferAction = async (emailToDecline: string) => {
       const cleanEmail = emailToDecline.trim().toLowerCase();
       if (!cleanEmail) return;
@@ -6676,7 +6722,7 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex gap-1 overflow-x-auto pb-1 shrink-0 no-scrollbar">
-                    {(['all', 'premium', 'pending', 'trial', 'expired'] as const).map(f => (
+                    {(['all', 'premium', 'transfer', 'pending', 'trial', 'expired'] as const).map(f => (
                       <button
                         key={f}
                         onClick={() => {
@@ -6684,7 +6730,7 @@ export default function App() {
                           playSound('correct');
                         }}
                         className={cn(
-                          "px-3 py-2 text-[10px] font-black uppercase rounded-lg border cursor-pointer transition-all whitespace-nowrap",
+                          "px-3 py-2 text-[10px] font-black uppercase rounded-lg border cursor-pointer transition-all whitespace-nowrap flex items-center gap-1",
                           adminUserFilter === f 
                             ? "bg-violet-600 border-violet-500 text-white" 
                             : "bg-slate-950 border-slate-800 text-gray-400 hover:text-white hover:border-slate-700"
@@ -6692,6 +6738,16 @@ export default function App() {
                       >
                         {f === 'all' && "Tous"}
                         {f === 'premium' && "👑 Abonnés Actifs"}
+                        {f === 'transfer' && (
+                          <>
+                            📲 Transferts d'Appareil
+                            {adminUsers.filter(u => u.transferRequested).length > 0 && (
+                              <span className="ml-1 px-1.5 py-0.5 bg-red-600 text-white text-[9px] rounded-full font-black animate-pulse">
+                                {adminUsers.filter(u => u.transferRequested).length}
+                              </span>
+                            )}
+                          </>
+                        )}
                         {f === 'pending' && "⏳ En Cours"}
                         {f === 'trial' && "🆓 Essais Actifs"}
                         {f === 'expired' && "🔴 Essais Expirés"}
@@ -6730,6 +6786,7 @@ export default function App() {
                       const isExpired = !premiumState && elapsedDays >= 7;
 
                       if (adminUserFilter === 'premium') return premiumState;
+                      if (adminUserFilter === 'transfer') return !!u.transferRequested;
                       if (adminUserFilter === 'pending') return !premiumState && hasPending;
                       if (adminUserFilter === 'trial') return !premiumState && !isExpired && !hasPending;
                       if (adminUserFilter === 'expired') return !premiumState && isExpired;
@@ -6788,13 +6845,20 @@ export default function App() {
                                 <span className="text-2xl pt-1 select-none">{u.avatar || "👨‍🎓"}</span>
                                 <div className="space-y-1.5">
                                   <div className="flex flex-wrap items-center gap-1.5">
-                                    <strong className="text-white text-sm font-black">{u.name}</strong>
+                                    <strong className="text-white text-sm font-black">
+                                      {u.lastName || u.firstName ? `${u.lastName} ${u.firstName}`.toUpperCase() : u.name}
+                                    </strong>
                                     {isBannedLocal && (
                                       <span className="bg-red-500/15 text-red-400 border border-red-500/20 text-[8px] font-mono px-1.5 py-0.5 rounded uppercase font-black">Banni</span>
                                     )}
                                   </div>
                                   <p className="text-[11px] text-gray-400 font-mono tracking-tight">{u.email}</p>
-                                  <p className="text-[10px] text-sky-205 font-semibold">{u.level} • <span className="text-gray-400">{u.regionName || "Centre (Ouagadougou)"}</span></p>
+                                  {(u.firstName || u.lastName) && (
+                                    <p className="text-[10px] text-violet-400 font-extrabold uppercase">
+                                      👤 Nom : {u.lastName || "-"} | Prénom : {u.firstName || "-"}
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] text-sky-200 font-semibold">{u.level} • <span className="text-gray-400">{u.regionName || "Centre (Ouagadougou)"}</span></p>
                                   
                                   {/* Subscription metrics summary */}
                                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -6838,8 +6902,8 @@ export default function App() {
                                   )}
 
                                   {u.phone && (
-                                    <div className="text-[10px] text-emerald-400 font-bold mt-1">
-                                      📞 Tél : {u.phone}
+                                    <div className="text-[10px] text-emerald-400 font-bold mt-1 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded inline-block">
+                                      📞 Numéro de Téléphone : {u.phone}
                                     </div>
                                   )}
                                   {u.boundDeviceId && (
@@ -6848,8 +6912,8 @@ export default function App() {
                                     </div>
                                   )}
                                   {u.transferRequested && (
-                                    <div className="text-[10px] text-rose-400 font-black uppercase mt-1.5 animate-pulse bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded">
-                                      📲 Transfert d'appareil à valider
+                                    <div className="text-[10px] text-rose-400 font-black uppercase mt-1.5 animate-pulse bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded select-none">
+                                      Demande d'autorisation de transfert (Requête Téléphone)
                                     </div>
                                   )}
                                 </div>
@@ -6884,14 +6948,24 @@ export default function App() {
                                 )}
 
                                 {u.transferRequested && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeclineTransferAction(u.email)}
-                                    className="p-1.5 bg-rose-950 text-rose-400 hover:bg-rose-900/40 border border-rose-800 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
-                                    title="Refuser l'autorisation de transfert"
-                                  >
-                                    📲 Décliner Transfert
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApproveTransferAction(u.email)}
+                                      className="p-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer border border-emerald-400 font-sans"
+                                      title="Valider l'autorisation de transfert d'appareil mobile"
+                                    >
+                                      📲 Valider Transfert
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeclineTransferAction(u.email)}
+                                      className="p-1.5 bg-rose-950 text-rose-400 hover:bg-rose-900/40 border border-rose-800 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer font-sans"
+                                      title="Refuser l'autorisation de transfert"
+                                    >
+                                      ✕ Décliner
+                                    </button>
+                                  </>
                                 )}
 
                                 {/* Direct safety block option */}
@@ -7269,12 +7343,15 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
                 setShowAdminModal(true);
                 playSound('correct');
               }}
-              className="px-3 py-2.5 bg-violet-500/10 hover:bg-violet-500/25 text-violet-500 dark:text-violet-400 font-extrabold text-[10px] uppercase rounded-xl transition-all border border-violet-500/20 cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-2.5 bg-violet-500/10 hover:bg-violet-500/25 text-violet-500 dark:text-violet-400 font-extrabold text-[10px] uppercase rounded-xl transition-all border border-violet-500/20 cursor-pointer flex items-center gap-1.5 relative"
               title="Espace de validation d'abonnements"
             >
               <span>🛠️ Admin</span>
-              {manualPayments.filter(tx => tx.status === 'pending').length > 0 && (
-                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
+              {(manualPayments.filter(tx => tx.status === 'pending').length > 0 || adminUsers.filter(u => u.transferRequested).length > 0) && (
+                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                </span>
               )}
             </button>
           )}
@@ -7293,7 +7370,7 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto pb-24">
-        {isTrialExpired() && activeTab !== 'Paiement' ? (
+        {isTrialExpired() && activeTab !== 'Paiement' && activeTab !== 'Historique' && activeTab !== 'Cours' ? (
           <div id="trial-expired-panel-lock" className="max-w-xl mx-auto my-12 p-8 bg-white dark:bg-gray-950 border border-red-200 dark:border-red-950/40 rounded-3xl shadow-2xl flex flex-col items-center justify-center text-center space-y-6">
             <div className="w-20 h-20 bg-rose-50 dark:bg-rose-950/30 text-rose-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
               <ShieldAlert size={36} />

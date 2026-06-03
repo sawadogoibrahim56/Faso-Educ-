@@ -97,6 +97,12 @@ function saveLocalDB() {
 async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "course", size: number = 1) {
   const cleanEmail = (email || "").trim().toLowerCase();
   
+  const adminEmail = (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+  if (cleanEmail === adminEmail || cleanEmail === "ibrahimsawadogo36@gmail.com") {
+    // Le compte administrateur ne souffre d'aucune restriction quant aux QCM ou cours
+    return { allowed: true, isPremium: true };
+  }
+
   if (!cleanEmail) {
     return { allowed: true, isPremium: false };
   }
@@ -1198,14 +1204,22 @@ app.get("/api/profiles/:email", async (req, res) => {
     return res.json({ registered: false, email: identifier });
   }
 
+  const adminEmail = (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+  const isAdminAccount = email.trim().toLowerCase() === adminEmail || email.trim().toLowerCase() === "ibrahimsawadogo36@gmail.com";
+
+  if (prof && isAdminAccount) {
+    prof.isPremium = true;
+    prof.is_premium = true;
+  }
+
   // Block banned emails immediately
   if (serverBannedEmails.includes(email)) {
     return res.status(403).json({ error: "banned", message: "Ce compte est suspendu par l'administration." });
   }
 
   if (prof) {
-    // DEVICE BINDING RULE: 1 Compte = 1 Téléphone
-    if (deviceId) {
+    // DEVICE BINDING RULE: 1 Compte = 1 Téléphone (Admin account is completely exempt from device binding block)
+    if (deviceId && !isAdminAccount) {
       // 1. One telephone cannot be used for multiple separate accounts:
       const otherProfWithDevice = Object.values(serverProfiles).find(p => p.email && p.email !== email && p.boundDeviceId === deviceId);
       if (otherProfWithDevice) {
@@ -1317,8 +1331,10 @@ app.post("/api/profiles/sync", async (req, res) => {
 
   // Determine true isPremium status server-side (preventing standard clients from upgrading themselves via sync)
   let isPremiumStatus = false;
-
-  if (supabaseAdmin) {
+  const adminEmail = (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+  if (email.toLowerCase().trim() === adminEmail || email.toLowerCase().trim() === "ibrahimsawadogo36@gmail.com") {
+    isPremiumStatus = true;
+  } else if (supabaseAdmin) {
     try {
       const { data: dbCheck } = await supabaseAdmin
         .from("profiles")
@@ -2212,6 +2228,9 @@ app.get("/api/admin/users", async (req, res) => {
     profilesList[email.toLowerCase()] = {
       email: p.email || email,
       name: p.name || email.split("@")[0],
+      firstName: p.firstName || p.first_name || "",
+      lastName: p.lastName || p.last_name || "",
+      phone: p.phone || "",
       level: p.level || "Licence",
       targetExam: p.targetExam || p.target_exam || "Non spécifié",
       regionName: p.regionName || p.region_name || "Centre (Ouagadougou)",
@@ -2239,6 +2258,9 @@ app.get("/api/admin/users", async (req, res) => {
           profilesList[email] = {
             email: row.email,
             name: row.name || email.split("@")[0],
+            firstName: row.first_name || row.firstName || "",
+            lastName: row.last_name || row.lastName || "",
+            phone: row.phone || row.phone_number || "",
             level: row.level || "Licence",
             targetExam: row.target_exam || "Non spécifié",
             regionName: row.region_name || "Centre (Ouagadougou)",
@@ -2268,6 +2290,15 @@ app.get("/api/admin/users", async (req, res) => {
       }
       if (serverProfiles[email].transferRequested) {
         profilesList[cleanEmail].transferRequested = serverProfiles[email].transferRequested;
+      }
+      if (serverProfiles[email].firstName) {
+        profilesList[cleanEmail].firstName = serverProfiles[email].firstName;
+      }
+      if (serverProfiles[email].lastName) {
+        profilesList[cleanEmail].lastName = serverProfiles[email].lastName;
+      }
+      if (serverProfiles[email].phone) {
+        profilesList[cleanEmail].phone = serverProfiles[email].phone;
       }
     }
   });
@@ -2517,6 +2548,18 @@ app.post("/api/auth/token-sync", async (req, res) => {
 
   if (!foundProfile) {
     return res.json({ registered: false, email });
+  }
+
+  const adminEmail = (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+  const isAdmin = email === adminEmail || email === "ibrahimsawadogo36@gmail.com";
+
+  if (isAdmin && foundProfile) {
+    foundProfile.isPremium = true;
+    foundProfile.is_premium = true;
+    if (serverProfiles[email]) {
+      serverProfiles[email].isPremium = true;
+      serverProfiles[email].is_premium = true;
+    }
   }
 
   const safeProfile = { ...foundProfile };

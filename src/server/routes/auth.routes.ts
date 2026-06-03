@@ -151,6 +151,9 @@ router.post("/login", authSecurityGuard(), async (req: Request, res: Response) =
 
   const token = generateUserToken({ email: cleanEmail });
   
+  const adminEmail = (process.env.ADMIN_EMAIL || "ibrahimsawadogo36@gmail.com").trim().toLowerCase();
+  const isAdmin = cleanEmail === adminEmail || cleanEmail === "ibrahimsawadogo36@gmail.com";
+
   // Build safe user profile payload completely devoid of password string
   const safeProfile = {
     email: dbUser.email,
@@ -159,7 +162,7 @@ router.post("/login", authSecurityGuard(), async (req: Request, res: Response) =
     lastName: dbUser.last_name || "",
     phone: dbUser.phone || "",
     level: dbUser.level || "Licence",
-    isPremium: !!dbUser.is_premium,
+    isPremium: isAdmin ? true : !!dbUser.is_premium,
     avatar: dbUser.avatar || "👨‍🎓",
     points: dbUser.points || 100,
     learningStreak: dbUser.learning_streak || 1,
