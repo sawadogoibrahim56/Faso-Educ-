@@ -170,7 +170,8 @@ router.post("/login", authSecurityGuard(), async (req: Request, res: Response) =
     regionName: dbUser.region_name || "Centre (Ouagadougou)",
     registered: true,
     boundDeviceId: dbUser.bound_device_id || null,
-    transferRequested: !!dbUser.transfer_requested
+    transferRequested: !!dbUser.transfer_requested,
+    registrationDate: dbUser.registration_date || dbUser.created_at || null
   };
 
   return res.json({

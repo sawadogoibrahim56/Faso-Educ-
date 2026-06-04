@@ -281,6 +281,14 @@ export default function App() {
           const banData = await banRes.json();
           if (Array.isArray(banData.bannedEmails)) {
             setBannedEmails(banData.bannedEmails);
+            const cleanUserEmail = (profile.email || "").trim().toLowerCase();
+            if (cleanUserEmail && banData.bannedEmails.includes(cleanUserEmail)) {
+              alert("❌ Ce compte est suspendu par l'administration.");
+              localStorage.removeItem('faso_educ_jwt_token');
+              localStorage.removeItem('faso_educ_user_profile');
+              setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+              return;
+            }
           }
         }
 
@@ -314,6 +322,16 @@ export default function App() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ token: cachedToken })
             });
+            if (authRes.status === 403) {
+              const authErrData = await authRes.json();
+              if (authErrData.error === 'banned') {
+                alert(authErrData.message || "❌ Ce compte est suspendu par l'administration.");
+                localStorage.removeItem('faso_educ_jwt_token');
+                localStorage.removeItem('faso_educ_user_profile');
+                setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+                return;
+              }
+            }
             if (authRes.ok) {
               const authData = await authRes.json();
               if (authData.registered && authData.profile) {
@@ -396,6 +414,13 @@ export default function App() {
             localStorage.removeItem('faso_educ_jwt_token');
             localStorage.removeItem('faso_educ_user_profile');
             return;
+          } else if (errData.error === 'banned') {
+            alert(errData.message || "❌ Votre compte est suspendu par l'administration.");
+            // Log out user
+            setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+            localStorage.removeItem('faso_educ_jwt_token');
+            localStorage.removeItem('faso_educ_user_profile');
+            return;
           }
         }
 
@@ -408,6 +433,7 @@ export default function App() {
               level: serverProf.level || prev.level,
               isPremium: !!serverProf.isPremium,
               password: serverProf.password || prev.password,
+              registrationDate: serverProf.registrationDate || prev.registrationDate,
               registered: true
             }));
           }
@@ -419,6 +445,18 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...profile, deviceId })
         });
+        
+        if (syncRes.status === 403 && isActive) {
+          const syncErrData = await syncRes.json();
+          if (syncErrData.error === 'banned') {
+            alert(syncErrData.message || "❌ Votre compte est suspendu par l'administration.");
+            setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+            localStorage.removeItem('faso_educ_jwt_token');
+            localStorage.removeItem('faso_educ_user_profile');
+            return;
+          }
+        }
+
         if (syncRes.ok && isActive) {
           const syncData = await syncRes.json();
           if (syncData && syncData.profile) {

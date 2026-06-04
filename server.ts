@@ -107,6 +107,15 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
     return { allowed: true, isPremium: false };
   }
 
+  // Block banned emails immediately on any premium or trial actions
+  if (serverBannedEmails.includes(cleanEmail)) {
+    return {
+      allowed: false,
+      reason: "banned",
+      message: "🔒 Ce compte Faso Educ est suspendu par l'administration."
+    };
+  }
+
   let prof = serverProfiles[cleanEmail];
 
   // Récupérer et synchroniser le statut premium et la date via Supabase
@@ -114,10 +123,20 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
     try {
       const { data } = await supabaseAdmin
         .from("profiles")
-        .select("is_premium, registration_date, created_at")
+        .select("is_premium, registration_date, created_at, is_banned")
         .eq("email", cleanEmail)
         .maybeSingle();
       if (data) {
+        if (data.is_banned) {
+          if (!serverBannedEmails.includes(cleanEmail)) {
+            serverBannedEmails.push(cleanEmail);
+          }
+          return {
+            allowed: false,
+            reason: "banned",
+            message: "🔒 Ce compte Faso Educ est suspendu par l'administration."
+          };
+        }
         if (!prof) {
           prof = {
             isPremium: !!data.is_premium,
@@ -1185,6 +1204,13 @@ app.get("/api/profiles/:email", async (req, res) => {
       if (error) throw error;
       if (data) {
         email = data.email || identifier;
+        if (data.is_banned) {
+          const cleanMail = email.trim().toLowerCase();
+          if (!serverBannedEmails.includes(cleanMail)) {
+            serverBannedEmails.push(cleanMail);
+          }
+          return res.status(403).json({ error: "banned", message: "🔒 Sécurité : Ce compte Faso Educ est suspendu." });
+        }
         prof = {
           email: data.email,
           name: data.name,
@@ -1201,7 +1227,8 @@ app.get("/api/profiles/:email", async (req, res) => {
           password: data.password || "",
           registered: true,
           boundDeviceId: data.bound_device_id || null,
-          transferRequested: !!data.transfer_requested
+          transferRequested: !!data.transfer_requested,
+          registrationDate: data.registration_date || data.created_at || null
         };
       }
     } catch (err: any) {
@@ -1411,7 +1438,8 @@ app.post("/api/profiles/sync", async (req, res) => {
         avatar: profile.avatar || "👨‍🎓",
         is_premium: isPremiumStatus,
         points: profile.points || 0,
-        learning_streak: profile.learningStreak || 0
+        learning_streak: profile.learningStreak || 0,
+        registration_date: profile.registrationDate || profile.registration_date || new Date().toISOString()
       };
 
       let syncedPassword = "";
@@ -2607,7 +2635,8 @@ app.post("/api/auth/token-sync", async (req, res) => {
           firstName: data.first_name || "",
           lastName: data.last_name || "",
           boundDeviceId: data.bound_device_id || null,
-          transferRequested: !!data.transfer_requested
+          transferRequested: !!data.transfer_requested,
+          registrationDate: data.registration_date || data.created_at || null
         };
       }
     } catch (e) {
