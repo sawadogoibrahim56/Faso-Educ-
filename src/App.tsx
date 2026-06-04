@@ -444,7 +444,7 @@ export default function App() {
   }, [profile]);
 
   // Helper calculation for trial days
-  const getTrialDaysRemaining = (): number => {
+  const getTrialDaysRemainingFraction = (): number => {
     if (profile.email && profile.email.trim().toLowerCase() === "ibrahimsawadogo36@gmail.com") {
       return 999;
     }
@@ -456,7 +456,30 @@ export default function App() {
     const elapsedMs = (now.getTime() - regDate.getTime()) + (shift * 24 * 60 * 60 * 1000);
     const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
     const remaining = 7 - elapsedDays;
+    return remaining;
+  };
+
+  const getTrialDaysRemaining = (): number => {
+    const remaining = getTrialDaysRemainingFraction();
+    if (remaining < 0) {
+      return Math.floor(remaining); // Keeps exact negative expired days count, e.g. -1, -2, -3
+    }
     return Math.max(0, Math.ceil(remaining));
+  };
+
+  const getFormattedTrialDays = (): { text: string; isExpired: boolean; rawVal: number } => {
+    const daysLeft = getTrialDaysRemaining();
+    if (profile.isPremium) {
+      return { text: "Illimité", isExpired: false, rawVal: 999 };
+    }
+    if (daysLeft < 0) {
+      return { text: `${daysLeft} jours`, isExpired: true, rawVal: daysLeft };
+    } else if (daysLeft === 0) {
+      return { text: `-0 jour`, isExpired: true, rawVal: 0 };
+    } else {
+      // For both new registered users and expired ones, we mark they remaining days countdown in red with a minus (-) prefix
+      return { text: `-${daysLeft} jour${daysLeft > 1 ? 's' : ''}`, isExpired: false, rawVal: daysLeft };
+    }
   };
 
   const isTrialExpired = (): boolean => {
@@ -1731,6 +1754,10 @@ export default function App() {
   }, [selectedCourse?.id, activeChapterIndex]);
 
   const handleGenerateChapterQuiz = async (course: CourseData, chapterTitle: string) => {
+    if (isTrialExpired()) {
+      setShowCheckoutModal(true);
+      return;
+    }
     setIsGenerating(true);
     
     // Check previous questions to avoid repetitions
@@ -1818,6 +1845,10 @@ export default function App() {
   };
 
   const handleGenerateCourseQuiz = async (course: CourseData) => {
+    if (isTrialExpired()) {
+      setShowCheckoutModal(true);
+      return;
+    }
     setIsGenerating(true);
     
     // Check previous questions to avoid repetitions
@@ -2019,18 +2050,31 @@ export default function App() {
                       <h4 className="font-bold text-sm dark:text-white">Prêt pour l'évaluation ?</h4>
                       <p className="text-[11px] text-gray-500">Exercez-vous immédiatement à travers un test QCM spécialisé sur ce chapitre.</p>
                     </div>
-                    <button
-                      onClick={() => handleGenerateChapterQuiz(selectedCourse, chapter.title)}
-                      disabled={isGenerating}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-faso-green text-white font-black text-xs rounded-xl hover:bg-green-600 disabled:opacity-50 transition-all shadow-sm shrink-0 shadow-emerald-500/10"
-                    >
-                      {isGenerating ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <BookOpenCheck size={14} />
-                      )}
-                      Lancer le QCM du chapitre (5 questions)
-                    </button>
+                    {isTrialExpired() ? (
+                      <button
+                        onClick={() => {
+                          setActiveTab('Paiement');
+                          playSound('correct');
+                        }}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-faso-red text-white font-black text-xs rounded-xl hover:bg-rose-600 transition-all shadow-sm shrink-0 shadow-rose-500/10 cursor-pointer"
+                      >
+                        <Lock size={14} />
+                        Quiz bloqué ({getFormattedTrialDays().text}) - S'abonner 👑
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleGenerateChapterQuiz(selectedCourse, chapter.title)}
+                        disabled={isGenerating}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-faso-green text-white font-black text-xs rounded-xl hover:bg-green-600 disabled:opacity-50 transition-all shadow-sm shrink-0 shadow-emerald-500/10"
+                      >
+                        {isGenerating ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <BookOpenCheck size={14} />
+                        )}
+                        Lancer le QCM du chapitre (5 questions)
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -2096,6 +2140,11 @@ export default function App() {
             <div className="flex items-center gap-2 text-faso-blue font-bold text-xs uppercase tracking-wider">
               <Sparkles size={14} className="animate-pulse" />
               Générateur de Cours Autonome (IA)
+              {!profile.isPremium && (
+                <span className="ml-auto px-2 py-0.5 bg-red-100 dark:bg-red-950/40 text-faso-red rounded-md text-[10px] font-black border border-red-200/50 animate-pulse">
+                  Essai : {getFormattedTrialDays().text}
+                </span>
+              )}
             </div>
             <h3 className="font-bold text-lg dark:text-white">Vous préparez un concours sur mesure ?</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
@@ -2103,45 +2152,65 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-3 pt-2">
-            <input
-              type="text"
-              value={customCourseTopic}
-              onChange={(e) => setCustomCourseTopic(e.target.value)}
-              placeholder="Ex: Équilibre de Nash, Comptabilité Générale, Politiques Publiques de l'UEMOA..."
-              className="flex-1 p-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-900 rounded-xl outline-none focus:ring-2 focus:ring-faso-blue focus:border-transparent dark:text-white text-sm"
-              disabled={isGeneratingCourse}
-            />
-            <div className="flex gap-2">
-              <select
-                value={selectedCourseLevel}
-                onChange={(e) => setSelectedCourseLevel(e.target.value as Level)}
-                className="p-3 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl outline-none text-sm dark:text-white"
-                disabled={isGeneratingCourse}
-              >
-                <option value="Licence">Licence</option>
-                <option value="Master">Master</option>
-                <option value="Premier cycle">Premier cycle</option>
-              </select>
+          {isTrialExpired() ? (
+            <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-950/40 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="space-y-1 text-center sm:text-left">
+                <h4 className="text-sm font-extrabold text-faso-red">⚠️ Module Bloqué - Essai gratuit Expiré</h4>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  Votre solde d'évaluation est entièrement épuisé (jours restants : <strong className="text-faso-red">{getFormattedTrialDays().text}</strong>). Vous devez activer votre accès Premium pour pouvoir continuer à créer ses propres cours scolaires de niveau supérieur.
+                </p>
+              </div>
               <button
-                onClick={handleCreateCustomCourse}
-                disabled={isGeneratingCourse || !customCourseTopic.trim()}
-                className="px-5 py-3 bg-faso-blue hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition-all shadow-md flex items-center gap-2 shrink-0"
+                onClick={() => {
+                  setActiveTab('Paiement');
+                  playSound('correct');
+                }}
+                className="px-4 py-2 bg-faso-red text-white text-xs font-black uppercase rounded-xl hover:bg-rose-600 transition-all shadow-sm whitespace-nowrap cursor-pointer"
               >
-                {isGeneratingCourse ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Curation en cours...
-                  </>
-                ) : (
-                  <>
-                    <Plus size={16} />
-                    Générer
-                  </>
-                )}
+                S'abonner maintenant 👑
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col md:flex-row gap-3 pt-2">
+              <input
+                type="text"
+                value={customCourseTopic}
+                onChange={(e) => setCustomCourseTopic(e.target.value)}
+                placeholder="Ex: Équilibre de Nash, Comptabilité Générale, Politiques Publiques de l'UEMOA..."
+                className="flex-1 p-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-900 rounded-xl outline-none focus:ring-2 focus:ring-faso-blue focus:border-transparent dark:text-white text-sm"
+                disabled={isGeneratingCourse}
+              />
+              <div className="flex gap-2">
+                <select
+                  value={selectedCourseLevel}
+                  onChange={(e) => setSelectedCourseLevel(e.target.value as Level)}
+                  className="p-3 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl outline-none text-sm dark:text-white"
+                  disabled={isGeneratingCourse}
+                >
+                  <option value="Licence">Licence</option>
+                  <option value="Master">Master</option>
+                  <option value="Premier cycle">Premier cycle</option>
+                </select>
+                <button
+                  onClick={handleCreateCustomCourse}
+                  disabled={isGeneratingCourse || !customCourseTopic.trim()}
+                  className="px-5 py-3 bg-faso-blue hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition-all shadow-md flex items-center gap-2 shrink-0"
+                >
+                  {isGeneratingCourse ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Curation en cours...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} />
+                      Générer
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Library Filters */}
@@ -4972,7 +5041,7 @@ export default function App() {
                   <p className="text-[11px] text-gray-500 leading-normal max-w-sm font-medium">
                     {profile.isPremium 
                       ? "Votre compte dispose de l'accès infini aux questionnaires d'excellence de l'IA Gemini et de la gestion de téléchargement." 
-                      : `Il vous reste ${getTrialDaysRemaining()} jours d'essai pour explorer librement l'arène de préparation.`}
+                      : <>Il vous reste <strong className="text-faso-red font-black text-sm">{getFormattedTrialDays().text}</strong> pour explorer librement l'arène de préparation.</>}
                   </p>
                 </div>
                 {!profile.isPremium ? (
@@ -5463,7 +5532,7 @@ export default function App() {
               ) : (
                 <>
                   <span className="text-xl font-black text-faso-green">✨ Version d'Évaluation</span>
-                  <span className="text-xs text-gray-500 font-bold">({daysLeft} jours restants)</span>
+                  <span className="text-xs text-faso-red font-black">({getFormattedTrialDays().text} restants)</span>
                 </>
               )}
             </div>
@@ -7236,7 +7305,7 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
             <XCircle className="text-faso-red shrink-0" size={16} />
             <div>
               <span className="text-xs font-extrabold text-faso-red uppercase tracking-wider block sm:inline">
-                ⚠️ Période d'essai expirée
+                ⚠️ Période d'essai expirée (<span className="text-faso-red font-black underline">{getFormattedTrialDays().text}</span>)
               </span>
               <span className="text-xs text-gray-500 dark:text-gray-400 font-medium ml-1">
                 Vos 7 jours d'essai gratuits sont terminés. Passez au premium pour débloquer de nouveau l'arène et les quiz.
@@ -7244,10 +7313,13 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
             </div>
           </div>
           <button
-            onClick={() => setShowCheckoutModal(true)}
-            className="px-4 py-2 bg-faso-blue hover:bg-faso-blue/80 text-white font-extrabold text-[10px] uppercase rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
+            onClick={() => {
+              setActiveTab('Paiement');
+              playSound('correct');
+            }}
+            className="px-4 py-2 bg-faso-red hover:bg-rose-600 text-white font-extrabold text-[10px] uppercase rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
           >
-            S'abonner maintenant
+            S'abonner maintenant 👑
           </button>
         </div>
       );
@@ -7259,7 +7331,7 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
           <Clock className="text-faso-green shrink-0" size={16} />
           <div>
             <span className="text-xs font-black text-faso-green uppercase tracking-wider">
-              ✨ Version d'évaluation : {daysLeft} jour{daysLeft > 1 ? 's' : ''} restant{daysLeft > 1 ? 's' : ''}
+              ✨ Version d'évaluation : <span className="text-faso-red font-black text-[13px] inline-block px-1 bg-red-100 rounded-sm">{getFormattedTrialDays().text}</span> d'évaluation restante
             </span>
             <span className="text-xs text-gray-500 dark:text-gray-400 font-medium ml-1">
               Profitez sereinement de Faso Educ. Vous pouvez à tout moment passer au Premium.
