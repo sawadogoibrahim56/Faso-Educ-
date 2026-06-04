@@ -22,7 +22,8 @@ import { configuredHelmet, configuredCors } from "./src/server/middleware/securi
 app.use(configuredHelmet);
 app.use(configuredCors);
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize Supabase Client if env is loaded
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
