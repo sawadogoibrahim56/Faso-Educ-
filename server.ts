@@ -184,25 +184,25 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
   const userLimit = serverDailyLimits[cleanEmail];
 
   if (actionType === "quiz") {
-    if (userLimit.quizCount >= 1 || userLimit.questionsCount >= 5) {
+    if (userLimit.quizCount >= 1 || userLimit.questionsCount >= 10) {
       return {
         allowed: false,
         reason: "limit_exceeded",
-        message: "⚠️ Limite d'essai dépassée : En version d'essai gratuite de 7 jours, vous êtes limité à la génération d'un unique QCM de 5 questions maximum par jour. Abonnez-vous à l'accès Elite Premium pour débloquer la génération illimitée !"
+        message: "⚠️ Limite d'essai dépassée : En version d'essai gratuite de 7 jours, vous êtes limité à la génération d'un unique QCM de 10 questions maximum par jour. Veuillez réessayer demain ou activer votre abonnement Elite Premium pour générer des QCM en illimité !"
       };
     }
-    if (size > 5) {
+    if (size > 10) {
       return {
         allowed: false,
         reason: "size_exceeded",
-        message: "⚠️ Taille de QCM non autorisée en mode gratuit : Votre QCM d'essai ne peut pas comporter plus de 5 questions. Veuillez sélectionner un maximum de 5 questions ou souscrire à l'abonnement Premium."
+        message: "⚠️ Taille de QCM non autorisée en mode gratuit : Votre QCM d'essai ne peut pas comporter plus de 10 questions. Veuillez sélectionner un maximum de 10 questions ou souscrire à l'abonnement Premium."
       };
     }
-    if (userLimit.questionsCount + size > 5) {
+    if (userLimit.questionsCount + size > 10) {
       return {
         allowed: false,
         reason: "limit_exceeded",
-        message: `⚠️ Limite d'essai dépassée : Vous avez déjà généré ${userLimit.questionsCount} questions aujourd'hui. Vous ne pouvez pas dépasser un cumul de 5 questions par jour en mode gratuit.`
+        message: `⚠️ Limite d'essai dépassée : Vous avez déjà généré ${userLimit.questionsCount} questions aujourd'hui. Vous ne pouvez pas dépasser un cumul de 10 questions par jour en mode gratuit.`
       };
     }
   } else if (actionType === "course") {
@@ -667,20 +667,34 @@ const FALLBACK_QUIZ_DATABASE = [
   }
 ];
 
-function getFallbackQuestions(subjects: string[], settings: any, totalTarget: number) {
+function getFallbackQuestions(subjects: string[], settings: any, totalTarget: number, excludeList: string[] = []) {
   const normSubjects = (subjects || []).map(s => s.toLowerCase().trim());
+  const normExclude = (excludeList || []).map(e => e.toLowerCase().trim()).filter(Boolean);
   
-  // Filter questions that have matching tags/content
+  // Filter questions that have matching tags/content AND are not duplicate
   let pool = FALLBACK_QUIZ_DATABASE.filter(q => {
+    const isExcluded = normExclude.some(ex => 
+      q.text.toLowerCase().trim() === ex || 
+      q.text.toLowerCase().trim().includes(ex) || 
+      ex.includes(q.text.toLowerCase().trim())
+    );
+    if (isExcluded) return false;
     return q.tags.some(tag => {
       return normSubjects.some(subj => subj.includes(tag) || tag.includes(subj));
     });
   });
   
-  // If pool is too small, combine all available questions from the database
+  // If pool is too small, combine all available questions from the database that are not excluded
   if (pool.length < totalTarget) {
     const poolTextSet = new Set(pool.map(p => p.text));
-    const remainder = FALLBACK_QUIZ_DATABASE.filter(p => !poolTextSet.has(p.text));
+    const remainder = FALLBACK_QUIZ_DATABASE.filter(p => {
+      const isExcluded = normExclude.some(ex => 
+        p.text.toLowerCase().trim() === ex || 
+        p.text.toLowerCase().trim().includes(ex) || 
+        ex.includes(p.text.toLowerCase().trim())
+      );
+      return !isExcluded && !poolTextSet.has(p.text);
+    });
     pool = [...pool, ...remainder];
   }
   
@@ -716,12 +730,14 @@ app.post("/api/gemini/quiz", async (req, res) => {
   const prof = cleanEmail ? serverProfiles[cleanEmail] : null;
   const persistentUserExclusions = prof ? (prof.generatedQuestions || []) : [];
 
+  const baseExcludedList = [...new Set([
+    ...(excludeQuestions || []),
+    ...persistentUserExclusions
+  ])];
+  const currentExcludedList = [...baseExcludedList];
+
   try {
     const accumulatedQuestions: any[] = [];
-    const baseExcludedList = [...new Set([
-      ...(excludeQuestions || []),
-      ...persistentUserExclusions
-    ])];
     
     // We generate in batches to ensure speed and prevent JSON/token truncations.
     // If the target is <= 35, we do it in a single batch. Otherwise, we do batches of 30, which is extremely fast.
@@ -731,11 +747,6 @@ app.post("/api/gemini/quiz", async (req, res) => {
     for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
       const currentBatchTarget = Math.min(batchSize, totalTarget - accumulatedQuestions.length);
       if (currentBatchTarget <= 0) break;
-      
-      const currentExcludedList = [
-        ...baseExcludedList,
-        ...accumulatedQuestions.map(q => q.text)
-      ];
       
       const prompt = `Génère un lot de ${currentBatchTarget} questions de quiz de préparation intensive aux CONCOURS PUBLICS (Burkina Faso) sur les sujets suivants : ${subjects.join(", ")}.
       Niveau d'études : ${settings?.level || "Licence"}
@@ -747,14 +758,14 @@ app.post("/api/gemini/quiz", async (req, res) => {
       2. COUVERTURE EXHAUSTIVE : Explore tous les aspects du programme (dates, acteurs clés, concepts, géographie, institutions, culture).
       3. STRUCTURE : 4 choix de réponses (1 correcte + 3 distracteurs crédibles).
       4. DIMENSIONS : Équilibre entre Intellectuelle (analyse), Morale (éthique/civisme) et Mémoire (faits précis).
-      5. PRIORITÉ GÉOPOLITIQUE : 
-         - Focus Majeur : Burkina Faso (Institutions, Histoire, Géographie, Actualités).
-         - Focus Secondaire : Afrique, Mali, Russie, Iran, Chine.
-         - Autres : Reste du monde.
+      5. PRIORITÉ GÉOPOLITIQUE ET ACTUALITÉ CONTEMPORAINE : 
+         - Focus Majeur : Burkina Faso. Privilégie l'histoire authentique, la géographie physique et humaine exacte, les institutions administratives et politiques de la Transition, l'AES (Alliance des États du Sahel), la refondation républicaine, et les réformes constitutionnelles et administratives récentes.
+         - Focus Secondaire : Afrique de l'Ouest, Mali, Niger, institutions de coopération régionale.
+         - Autres : Actualités majeures mondiales.
       6. STYLE : Langage administratif et pédagogique de type concours.
       7. EXACTITUDE FACTUELLE ABSOLUE : Vérifie chaque fait, date et surnom. Par exemple, Banfora est la "Cité du Paysan Noir" (et non Koudougou qui est la "Cité du Cavalier Rouge"). Toute erreur factuelle est inacceptable pour une préparation de concours.
-      8. CONFORMITÉ TERRITORIALE STRICTE (BURKINA FASO) : Le Burkina Faso compte exactement 45 provinces (et non 30 ou d'autres chiffres obsolètes) et 13 régions administratives d'apprentissage de planification. Assurez-vous que chaque question portant sur la politique ou l'administration ou la géographie du Burkina Faso respecte méticuleusement cette répartition exacte et contemporaine.
-      9. AUTHENTICITÉ ET VÉRACITÉ : Les questions et réponses doivent être rigoureusement authentiques et vérifiables. Pas d'inventions ou d'approximations.
+      8. CONFORMITÉ TERRITORIALE ET SOUVERAINETÉ (BURKINA FASO) : Le Burkina Faso compte exactement 45 provinces et 13 régions administratives. Les questions portant sur la politique, la Constitution révisée, l'administration territoriale, ou la géophysique doivent impérativement refléter les dernières réformes officielles en vigueur.
+      9. AUTHENTICITÉ ET VÉRACITÉ DOCUMENTAIRE : Chaque question sur l'histoire ou l'actualité contemporaine doit s'appuyer sur des faits réels, consensuels ou officiellement décrétés. Évite absolument tout anachronisme ou approximation historique, en s'assurant que l'actualité récente et les nouvelles réformes législatives soient parfaitement intégrées et valides.
       10. INTÉGRATION ET RÉDACTION DES ÉQUATIONS LATEX (VITAL - RENDU SÉCURISÉ ET OBLIGATOIRE) :
           Si le sujet concerne l'économie, la finance, les mathématiques ou les statistiques, intégrez impérativement des formules rédigées en LaTeX standard de très haute qualité :
           - Utilisez TOUJOURS les commandes LaTeX internationales en anglais. Il est ABSOLUMENT INTERDIT d'écrire 'fraction' ou 'frac' ou 'beta' ou 'alpha' ou 'somme' en toutes lettres sans antislash (vous devez TOUJOURS écrire $\\alpha$, $\\beta$, $\\frac{a}{b}$, $\\sum$, etc.).
@@ -762,7 +773,7 @@ app.post("/api/gemini/quiz", async (req, res) => {
           - Évitez absolument d'introduire des mots français ou du texte normal de phrase directement à l'intérieur de blocs mathématiques (par exemple n'écrivez pas $la fraction est ...$).
           - Utilisez de vrais symboles de multiplication (\\times ou \\cdot) et jamais de lettre 'x' ou '*' à l'intérieur d'un bloc de formule.
       
-      ${currentExcludedList.length > 0 ? `11. EXCLUSION STRICTE : Ne répète ABSOLUMENT PAS ces questions déjà traitées : [${currentExcludedList.slice(-80).join(" | ")}]. Propose de NOUVELLES questions de quiz uniques et différentes.` : "11. Explore un large éventail de thématiques pour enrichir la base de connaissances."}
+      ${currentExcludedList.length > 0 ? `11. EXCLUSION STRICTE : Ne répète ABSOLUMENT PAS ces questions de quiz déjà traitées ou déjà présentes dans la bibliothèque : [${currentExcludedList.slice(-1000).join(" | ")}]. Propose de NOUVELLES questions de quiz uniques, authentiques et actualisées, en particulier sur l'actualité contemporaine, l'histoire, la géographie, l'intégration régionale ou les nouvelles réformes (Burkina Faso). Chaque question générée doit être inédite.` : "11. Explore de nouvelles thématiques variées d'actualité et d'histoire-géographie moderne burkinabè pour proposer des questions inédites."}
  
       Retourne un tableau JSON d'objets :
       {
@@ -835,7 +846,26 @@ app.post("/api/gemini/quiz", async (req, res) => {
         
         const parsedQuestions = JSON.parse(response.text || "[]");
         const validQuestions = Array.isArray(parsedQuestions) ? parsedQuestions : [];
-        accumulatedQuestions.push(...validQuestions);
+        
+        // Server-side duplicate filter to guarantee 100% authenticity and prevent previously solved questions from slipping through.
+        for (const q of validQuestions) {
+          if (!q || !q.text) continue;
+          
+          const isDuplicate = currentExcludedList.some(ex => {
+            if (!ex) return false;
+            const normEx = ex.toLowerCase().trim();
+            const normQText = q.text.toLowerCase().trim();
+            // Prevent exact, substring, or near-identical matching
+            return normEx === normQText || normQText.includes(normEx) || normEx.includes(normQText);
+          });
+          
+          if (!isDuplicate) {
+            accumulatedQuestions.push(q);
+            currentExcludedList.push(q.text);
+          } else {
+            console.warn(`[DUPLICATE FILTER] Blocked repeated question found in generation batch: "${q.text}"`);
+          }
+        }
         
         // Slightly delay next batch call to respect standard API quotas
         if (batchIdx < totalBatches - 1) {
@@ -855,7 +885,7 @@ app.post("/api/gemini/quiz", async (req, res) => {
     if (accumulatedQuestions.length < totalTarget) {
       const delta = totalTarget - accumulatedQuestions.length;
       console.info(`⚡ Padding remaining ${delta} questions from highly refined fallback database to reach strict requested count of ${totalTarget}.`);
-      const fallbackPadding = getFallbackQuestions(subjects, settings, delta);
+      const fallbackPadding = getFallbackQuestions(subjects, settings, delta, currentExcludedList);
       accumulatedQuestions.push(...fallbackPadding);
     }
     
@@ -868,9 +898,9 @@ app.post("/api/gemini/quiz", async (req, res) => {
     if (prof) {
       if (!prof.generatedQuestions) prof.generatedQuestions = [];
       prof.generatedQuestions.push(...formattedQuestions.map(q => q.text));
-      // Keep it up to 1000 items to avoid infinite local JSON growth
-      if (prof.generatedQuestions.length > 1000) {
-        prof.generatedQuestions = prof.generatedQuestions.slice(-1000);
+      // Keep it up to 3000 items to avoid infinite local JSON growth while retaining vast history
+      if (prof.generatedQuestions.length > 3000) {
+        prof.generatedQuestions = prof.generatedQuestions.slice(-3000);
       }
 
       // Record administrative activity telemetry
@@ -889,7 +919,7 @@ app.post("/api/gemini/quiz", async (req, res) => {
   } catch (error: any) {
     console.error("Quiz generation error on server, falling back:", error);
     try {
-      const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget);
+      const fallbackQs = getFallbackQuestions(subjects, settings, totalTarget, baseExcludedList);
       if (prof) {
         prof.totalQcmsGenerated = (prof.totalQcmsGenerated || 0) + 1;
         prof.totalQuestionsGenerated = (prof.totalQuestionsGenerated || 0) + fallbackQs.length;
@@ -1355,8 +1385,25 @@ app.post("/api/profiles/sync", async (req, res) => {
         isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
       }
 
+      // Safe exist check in Supabase to determine if UPDATE or INSERT should be used
+      let existsInDb = false;
+      let dbExistingPassword = "";
+      try {
+        const { dataCheck, errorCheck } = await supabaseAdmin
+          .from("profiles")
+          .select("email, password")
+          .eq("email", email)
+          .maybeSingle() as any;
+        if (dataCheck) {
+          existsInDb = true;
+          dbExistingPassword = dataCheck.password || "";
+        }
+      } catch (checkErr) {
+        // If query fails, fall back to matching serverProfiles existence
+        existsInDb = !!serverProfiles[email];
+      }
+
       const safeData: any = {
-        email: email,
         name: profile.name,
         level: profile.level,
         target_exam: profile.targetExam,
@@ -1376,11 +1423,30 @@ app.post("/api/profiles/sync", async (req, res) => {
         safeData.password = syncedPassword;
       }
 
-      // Perform standard columns upsert first (guaranteed to succeed on standard schema layout)
-      const { error: baseError } = await supabaseAdmin.from("profiles").upsert(safeData, { onConflict: "email" });
+      let baseError = null;
+      if (existsInDb) {
+        // Safe UPDATE (only updates specified columns, leaving password and other omitted columns absolutely untouched)
+        const { error } = await supabaseAdmin
+          .from("profiles")
+          .update(safeData)
+          .eq("email", email);
+        baseError = error;
+      } else {
+        // Safe INSERT
+        safeData.email = email;
+        if (!safeData.password) {
+          // Fall back to memory cache password if we have it
+          const memPass = serverProfiles[email]?.password;
+          if (memPass) safeData.password = memPass;
+        }
+        const { error } = await supabaseAdmin
+          .from("profiles")
+          .insert(safeData);
+        baseError = error;
+      }
       
       if (baseError) {
-        console.warn("Standard profile columns upsert error (continuing with local cache):", baseError.message);
+        console.warn("Standard profile columns sync error (continuing with local cache):", baseError.message);
       } else {
         // Standard columns saved successfully! Now quietly and gracefully update extra custom/newer attributes
         const extraData: any = {};
@@ -1421,6 +1487,9 @@ app.post("/api/profiles/sync", async (req, res) => {
     isPremiumStatus = serverProfiles[email] ? (!!serverProfiles[email].isPremium || !!serverProfiles[email].is_premium) : false;
   }
 
+  // Preserve password in memory before spreading the payload which has no password field
+  const existingPassword = serverProfiles[email]?.password;
+
   // Sync to memory including all specified registration fields
   serverProfiles[email] = {
     ...serverProfiles[email],
@@ -1431,6 +1500,10 @@ app.post("/api/profiles/sync", async (req, res) => {
     isPremium: isPremiumStatus,
     registered: true
   };
+
+  if (existingPassword && (!profile.password || profile.password === "")) {
+    serverProfiles[email].password = existingPassword;
+  }
 
   if (profile.password) {
     let finalPassword = profile.password;
@@ -2644,11 +2717,11 @@ app.get("/api/courses", async (req, res) => {
           chapters: typeof c.chapters === 'string' ? JSON.parse(c.chapters) : c.chapters,
           level: c.level,
           userEmail: c.user_email,
-          isPublic: c.is_public
+          isPublic: c.is_public === true || c.is_public === 'true'
         }));
         
         // Return courses that are EITHER public OR owned by the active candidate
-        const filtered = formatted.filter((c: any) => c.isPublic || (userEmail && c.userEmail === userEmail));
+        const filtered = formatted.filter((c: any) => c.isPublic === true || (userEmail && c.userEmail === userEmail));
         return res.json(filtered);
       }
     } catch (err: any) {
@@ -2656,7 +2729,7 @@ app.get("/api/courses", async (req, res) => {
     }
   }
   
-  const filteredMemory = serverCourses.filter(c => c.isPublic || (userEmail && c.userEmail === userEmail));
+  const filteredMemory = serverCourses.filter(c => c.isPublic === true || (userEmail && c.userEmail === userEmail));
   res.json(filteredMemory);
 });
 

@@ -679,11 +679,11 @@ export default function App() {
     const timePerQ = mode === 'Entraînement' ? 119 : mode === 'Test' ? 117 : 105;
     const count = settings.questionCount;
     
-    // Récupérer la totalité des questions déjà posées de tout l'historique pour éviter strictement toute répétition
-    const previousQuestions = history
-      .flatMap(h => h.questions.map(q => q ? q.text : ""))
-      .filter(Boolean)
-      .slice(0, 150); // Garantie complète sans aucune répétition de thèmes croisés
+    // Récupérer la totalité absolue de tout l'historique et de la bibliothèque pour éviter strictement toute répétition
+    const previousQuestions = [
+      ...history.flatMap(h => h.questions.map(q => q ? q.text : "")),
+      ...bookmarkedQuestions.map(q => q ? q.text : "")
+    ].filter(Boolean);
 
     const controller = new AbortController();
     quizAbortControllerRef.current = controller;
@@ -1734,9 +1734,10 @@ export default function App() {
     setIsGenerating(true);
     
     // Check previous questions to avoid repetitions
-    const previousQuestions = history
-      .flatMap(h => h.questions.map(q => q.text))
-      .slice(0, 50);
+    const previousQuestions = [
+      ...history.flatMap(h => h.questions.map(q => q ? q.text : "")),
+      ...bookmarkedQuestions.map(q => q ? q.text : "")
+    ].filter(Boolean);
 
     const controller = new AbortController();
     quizAbortControllerRef.current = controller;
@@ -1820,9 +1821,10 @@ export default function App() {
     setIsGenerating(true);
     
     // Check previous questions to avoid repetitions
-    const previousQuestions = history
-      .flatMap(h => h.questions.map(q => q.text))
-      .slice(0, 50);
+    const previousQuestions = [
+      ...history.flatMap(h => h.questions.map(q => q ? q.text : "")),
+      ...bookmarkedQuestions.map(q => q ? q.text : "")
+    ].filter(Boolean);
 
     const controller = new AbortController();
     quizAbortControllerRef.current = controller;
