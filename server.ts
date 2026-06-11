@@ -147,7 +147,7 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
     try {
       const { data } = await supabaseAdmin
         .from("profiles")
-        .select("is_premium, registration_date, created_at, is_banned")
+        .select("is_premium, created_at, is_banned")
         .eq("email", cleanEmail)
         .maybeSingle();
       if (data) {
@@ -164,14 +164,12 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
         if (!prof) {
           prof = {
             isPremium: !!data.is_premium,
-            registration_date: data.registration_date || data.created_at || new Date().toISOString()
+            registration_date: data.created_at || new Date().toISOString()
           };
           serverProfiles[cleanEmail] = prof;
         } else {
           prof.isPremium = !!data.is_premium;
-          if (data.registration_date) {
-            prof.registration_date = data.registration_date;
-          } else if (data.created_at) {
+          if (data.created_at) {
             prof.registration_date = data.created_at;
           }
         }
@@ -1462,8 +1460,7 @@ app.post("/api/profiles/sync", async (req, res) => {
         avatar: profile.avatar || "👨‍🎓",
         is_premium: isPremiumStatus,
         points: profile.points || 0,
-        learning_streak: profile.learningStreak || 0,
-        registration_date: profile.registrationDate || profile.registration_date || new Date().toISOString()
+        learning_streak: profile.learningStreak || 0
       };
 
       let syncedPassword = "";
@@ -1486,6 +1483,7 @@ app.post("/api/profiles/sync", async (req, res) => {
       } else {
         // Safe INSERT
         safeData.email = email;
+        safeData.created_at = profile.registrationDate || profile.registration_date || new Date().toISOString();
         if (!safeData.password) {
           // Fall back to memory cache password if we have it
           const memPass = serverProfiles[email]?.password;

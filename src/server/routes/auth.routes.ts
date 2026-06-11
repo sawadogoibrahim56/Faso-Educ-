@@ -58,7 +58,7 @@ router.post("/register", async (req: Request, res: Response) => {
     points: 100,
     learning_streak: 1,
     registered: true,
-    registration_date: new Date().toISOString()
+    created_at: new Date().toISOString()
   };
 
   if (supabaseAdmin) {
@@ -74,8 +74,9 @@ router.post("/register", async (req: Request, res: Response) => {
         return res.status(400).json({ error: "Cet e-mail est déjà associé à un autre compte." });
       }
 
-      // Upsert/Insert profile with hashed password
-      const { error } = await supabaseAdmin.from("profiles").upsert(newProfile, { onConflict: "email" });
+      // Upsert/Insert profile with hashed password without physical registration_date column
+      const dbProfile = { ...newProfile };
+      const { error } = await supabaseAdmin.from("profiles").upsert(dbProfile, { onConflict: "email" });
       if (error) throw error;
 
     } catch (err: any) {
@@ -87,8 +88,12 @@ router.post("/register", async (req: Request, res: Response) => {
   const token = generateUserToken({ email: cleanEmail });
   
   // Return safe profile payload WITHOUT password column
-  const safeProfile = { ...newProfile };
+  const safeProfile = { 
+    ...newProfile,
+    registrationDate: newProfile.created_at
+  };
   delete (safeProfile as any).password;
+  delete (safeProfile as any).created_at;
 
   return res.json({
     success: true,
