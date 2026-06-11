@@ -31,6 +31,7 @@ import { generateQuizQuestions } from '../services/geminiService';
 import { MathRenderer } from './MathRenderer';
 import { jsPDF } from 'jspdf';
 import { getApiUrl } from '../lib/api';
+import { formatMathForPDF } from '../lib/pdfGenerator';
 
 const ProgressBar = ({ progress, color = "bg-faso-blue" }: { progress: number, color?: string }) => (
   <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
@@ -1431,7 +1432,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       currY += 5;
       
       // Question Text
-      const textToRender = q.text.replace(/\\/g, '');
+      const textToRender = formatMathForPDF(q.text);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9.5);
       doc.setTextColor(30, 41, 59);
@@ -1460,7 +1461,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
           doc.setTextColor(71, 85, 105);
         }
         
-        const cleanOpt = opt.replace(/\\/g, '');
+        const cleanOpt = formatMathForPDF(opt);
         const badge = isOptCorrect 
           ? "[Bonne réponse] " 
           : isOptUserSelected 
@@ -1477,7 +1478,7 @@ export const CompetitionArena: React.FC<CompetitionArenaProps> = ({
       currY += 2;
       
       // Explanation Box
-      const cleanExpl = q.explanation.replace(/\\/g, '');
+      const cleanExpl = formatMathForPDF(q.explanation);
       const explLines = doc.splitTextToSize(`Explication Faso Educ : ${cleanExpl}`, 175);
       
       checkSpace(explLines.length * 4.2 + 8);

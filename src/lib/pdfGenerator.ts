@@ -2,6 +2,191 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { QuizResult, CourseData } from '../types';
 
+/**
+ * Parses and formats math/LaTeX expressions within text into a beautiful, 
+ * highly readable standard mathematical notation for static PDFs.
+ * This completely resolves the raw display of LaTeX commands (e.g. \lambda, \frac, \infty) 
+ * so that they look premium, clear, and perfectly eligible for study.
+ */
+export const formatMathForPDF = (text: string): string => {
+  if (!text) return "";
+
+  const formatBlock = (math: string, isBlock: boolean = false): string => {
+    let s = math;
+
+    // 1. Clean spaces
+    s = s.replace(/\s+/g, ' ');
+
+    // 2. Correct missing backslashes or wrong notation in fractions
+    s = s.replace(/(?<!\\)\b(fraction|frac)\s*\{/g, '\\frac{');
+    s = s.replace(/\\fraction\s*\{/g, '\\frac{');
+    s = s.replace(/\\?(?:fraction|frac)\s*\(([^)]+)\)\s*\(([^)]+)\)/g, '\\frac{$1}{$2}');
+
+    const lowercaseGreek = 'alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega';
+    const uppercaseGreek = 'Alpha|Beta|Gamma|Delta|Epsilon|Zeta|Eta|Theta|Iota|Kappa|Lambda|Mu|Nu|Xi|Omicron|Pi|Rho|Sigma|Tau|Upsilon|Phi|Chi|Psi|Omega';
+    
+    // Auto-restore missing backslashes for Greek variables
+    const greekRegexLower = new RegExp(`(?<!\\\\)\\b(${lowercaseGreek})\\b`, 'g');
+    const greekRegexUpper = new RegExp(`(?<!\\\\)\\b(${uppercaseGreek})\\b`, 'g');
+    s = s.replace(greekRegexLower, '\\$1');
+    s = s.replace(greekRegexUpper, '\\$1');
+
+    s = s.replace(/(?<!\\)\bsomme\b/gi, '\\sum');
+    s = s.replace(/(?<!\\)\bproduit\b/gi, '\\prod');
+    s = s.replace(/(?<!\\)\binfini\b/gi, '\\infty');
+
+    // 3. Robust math structure translations:
+    // Fractions \frac{A}{B} to (A)/(B) (recursive to catch nested ones)
+    for (let k = 0; k < 5; k++) {
+      s = s.replace(/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1) / ($2)');
+    }
+    s = s.replace(/\\frac\s+([A-Za-z0-9])\s+([A-Za-z0-9])/g, '$1 / $2');
+
+    // Simple fraction styling optimization (e.g. (x) / (y) -> x/y)
+    s = s.replace(/\(([a-zA-Z0-9])\)\s*\/\s*\(([a-zA-Z0-9])\)/g, '$1/$2');
+
+    // Superscripts and powers
+    s = s.replace(/\^\{\s*2\s*\}/g, '²');
+    s = s.replace(/\^2/g, '²');
+    s = s.replace(/\^\{\s*3\s*\}/g, '³');
+    s = s.replace(/\^3/g, '³');
+    s = s.replace(/\^\{\s*n\s*\}/g, 'ⁿ');
+    s = s.replace(/\^\{\s*x\s*\}/g, 'ˣ');
+    s = s.replace(/\^\{\s*([^{}]+)\s*\}/g, '^($1)');
+
+    // Subscripts
+    s = s.replace(/_\{\s*([^{}]+)\s*\}/g, '_($1)');
+
+    // Sum, product, integral notations
+    s = s.replace(/\\sum_\{([^}]+)\}\^\{([^}]+)\}/g, 'Σ($1 à $2)');
+    s = s.replace(/\\sum_\{([^}]+)\}\^([a-zA-Z0-9])/g, 'Σ($1 à $2)');
+    s = s.replace(/\\sum_([a-zA-Z0-9])\^([a-zA-Z0-9])/g, 'Σ($1 à $2)');
+    s = s.replace(/\\sum_\{([^}]+)\}/g, 'Σ($1)');
+    s = s.replace(/\\sum/g, 'Σ');
+
+    s = s.replace(/\\prod_\{([^}]+)\}\^\{([^}]+)\}/g, '∏($1 à $2)');
+    s = s.replace(/\\prod_\{([^}]+)\}\^([a-zA-Z0-9])/g, '∏($1 à $2)');
+    s = s.replace(/\\prod_\{([^}]+)\}/g, '∏($1)');
+    s = s.replace(/\\prod/g, '∏');
+
+    s = s.replace(/\\int_\{([^}]+)\}\^\{([^}]+)\}/g, '∫(de $1 à $2)');
+    s = s.replace(/\\int_\{([^}]+)\}\^([a-zA-Z0-9])/g, '∫(de $1 à $2)');
+    s = s.replace(/\\int_([a-zA-Z0-9])\^([a-zA-Z0-9])/g, '∫(de $1 à $2)');
+    s = s.replace(/\\int/g, '∫');
+
+    s = s.replace(/\\lim_\{([^}]+)\}/g, 'Lim($1)');
+    s = s.replace(/\\lim/g, 'Lim');
+
+    s = s.replace(/\\sqrt\s*\{([^{}]+)\}/g, '√($1)');
+    s = s.replace(/\\overline\s*\{([^{}]+)\}/g, '($1)̄');
+
+    // Matrices and arrays
+    s = s.replace(/\\begin\{[a-zA-Z]*matrix\}([\s\S]*?)\\end\{[a-zA-Z]*matrix\}/g, (match, body) => {
+      return '[' + body.trim().replace(/&/g, ' | ').replace(/\\\\/g, ' ; ') + ']';
+    });
+
+    // 4. Translate known LaTeX symbols & Greek variables to clean, standard symbols
+    const symbolMap: { [key: string]: string } = {
+      '\\alpha': 'α',
+      '\\beta': 'β',
+      '\\gamma': 'γ',
+      '\\delta': 'δ',
+      '\\epsilon': 'ε',
+      '\\zeta': 'ζ',
+      '\\eta': 'η',
+      '\\theta': 'θ',
+      '\\iota': 'ι',
+      '\\kappa': 'κ',
+      '\\lambda': 'λ',
+      '\\mu': 'μ',
+      '\\nu': 'ν',
+      '\\xi': 'ξ',
+      '\\pi': 'π',
+      '\\rho': 'ρ',
+      '\\sigma': 'σ',
+      '\\tau': 'τ',
+      '\\upsilon': 'υ',
+      '\\phi': 'φ',
+      '\\chi': 'χ',
+      '\\psi': 'ψ',
+      '\\omega': 'ω',
+      '\\Delta': 'Δ',
+      '\\Sigma': 'Σ',
+      '\\Omega': 'Ω',
+      '\\Gamma': 'Γ',
+      '\\Theta': 'Θ',
+      '\\Phi': 'Φ',
+      '\\Psi': 'Ψ',
+      '\\infty': '∞',
+      '\\pm': '±',
+      '\\mp': '∓',
+      '\\times': '×',
+      '\\div': '÷',
+      '\\le': '≤',
+      '\\leq': '≤',
+      '\\ge': '≥',
+      '\\geq': '≥',
+      '\\ne': '≠',
+      '\\neq': '≠',
+      '\\approx': '≈',
+      '\\in': '∈',
+      '\\notin': '∉',
+      '\\ni': '∋',
+      '\\forall': '∀',
+      '\\exists': '∃',
+      '\\rightarrow': '→',
+      '\\to': '→',
+      '\\implies': '⇒',
+      '\\leftrightarrow': '↔',
+      '\\partial': '∂',
+      '\\nabla': '∇',
+      '\\cdot': '·',
+      '\\sqrt': '√',
+      '\\propto': '∝',
+      '\\cap': '∩',
+      '\\cup': '∪',
+      '\\subset': '⊂',
+      '\\supset': '⊃',
+      '\\subseteq': '⊆',
+      '\\supseteq': '⊇',
+      '\\varnothing': 'Ø',
+      '\\emptyset': 'Ø',
+      '\\aleph': 'ℵ',
+      '\\hbar': 'ℏ',
+    };
+
+    Object.keys(symbolMap).forEach((cmd) => {
+      const escapedCmd = cmd.replace(/\\/g, '\\\\');
+      s = s.replace(new RegExp(`${escapedCmd}\\b`, 'g'), symbolMap[cmd]);
+      s = s.replace(new RegExp(`${escapedCmd}`, 'g'), symbolMap[cmd]);
+    });
+
+    // Remove remaining formatting commands
+    s = s.replace(/\\{/g, '{').replace(/\\}/g, '}');
+    s = s.replace(/\\[,;!:]/g, ' ');
+    s = s.replace(/\\(?![a-zA-Z])/g, '');
+
+    if (isBlock) {
+      return '\n    [ Formule : ' + s.trim() + ' ]\n';
+    }
+    return ' ' + s.trim() + ' ';
+  };
+
+  let formatted = text;
+  
+  // Format math blocks $$...$$ (Block math display)
+  formatted = formatted.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+    return formatBlock(formula, true);
+  });
+
+  // Format math inline $...$ (Inline math display)
+  formatted = formatted.replace(/\$([^$]+)\$/g, (match, formula) => {
+    return formatBlock(formula, false);
+  });
+
+  return formatted;
+};
+
 export const generateQuizPDF = (result: QuizResult) => {
   const doc = new jsPDF();
   const fasoGreen: [number, number, number] = [0, 158, 73];
@@ -39,14 +224,16 @@ export const generateQuizPDF = (result: QuizResult) => {
     }
 
     doc.setFont('helvetica', 'bold');
-    const questionLines = doc.splitTextToSize(`${i + 1}. ${q.text}`, 180);
+    const cleanQuestionText = formatMathForPDF(`${i + 1}. ${q.text}`);
+    const questionLines = doc.splitTextToSize(cleanQuestionText, 180);
     doc.text(questionLines, 14, currentY);
     currentY += (questionLines.length * 5) + 2;
 
     doc.setFont('helvetica', 'normal');
     q.options.forEach((opt, oIdx) => {
       const letter = String.fromCharCode(65 + oIdx);
-      const optionText = `${letter}) ${opt}`;
+      const cleanOpt = formatMathForPDF(opt);
+      const optionText = `${letter}) ${cleanOpt}`;
       const optionLines = doc.splitTextToSize(optionText, 170);
       doc.text(optionLines, 20, currentY);
       currentY += (optionLines.length * 5);
@@ -64,8 +251,8 @@ export const generateQuizPDF = (result: QuizResult) => {
 
   const corrigéData = result.questions.map((q, i) => [
     i + 1,
-    q.options[q.correctAnswer],
-    q.explanation
+    formatMathForPDF(q.options[q.correctAnswer]),
+    formatMathForPDF(q.explanation)
   ]);
 
   autoTable(doc, {
@@ -139,16 +326,14 @@ export const generateCoursePDF = (course: CourseData) => {
     doc.setFontSize(10);
     doc.setTextColor(40, 40, 40);
 
-    // Clean LaTeX syntax slightly for standard representation in static PDF
-    const preCleanStr = chapter.content
-      .replace(/\$\$([\s\S]*?)\$\$/g, '\n[ÉQUATION]: $1\n') // Block equations block
-      .replace(/\$([\s\S]*?)\$/g, ' $1 '); // Inline equations block
+    // Render LaTeX formulas into high-quality math text on PDF using our central formatter
+    const formattedContent = formatMathForPDF(chapter.content);
 
-    const storyLines = doc.splitTextToSize(preCleanStr, 180);
+    const storyLines = doc.splitTextToSize(formattedContent, 180);
     storyLines.forEach((line: string) => {
       if (currentY > pageHeight - 20) {
-        doc.addPage();
-        currentY = 20;
+         doc.addPage();
+         currentY = 20;
       }
       doc.text(line, 14, currentY);
       currentY += 5.5;

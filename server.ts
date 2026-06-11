@@ -117,6 +117,29 @@ async function checkFreeTrialAndLimits(email: string, actionType: "quiz" | "cour
     };
   }
 
+  // Active Live database validation fallback for maximum security
+  if (supabaseAdmin) {
+    try {
+      const { data: dbCheck } = await supabaseAdmin
+        .from("profiles")
+        .select("is_banned")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+      if (dbCheck && dbCheck.is_banned) {
+        if (!serverBannedEmails.includes(cleanEmail)) {
+          serverBannedEmails.push(cleanEmail);
+        }
+        return {
+          allowed: false,
+          reason: "banned",
+          message: "🔒 Ce compte Faso Educ est suspendu par l'administration."
+        };
+      }
+    } catch (err: any) {
+      console.warn("Failed live ban check fallback in checkFreeTrialAndLimits:", err.message);
+    }
+  }
+
   let prof = serverProfiles[cleanEmail];
 
   // Récupérer et synchroniser le statut premium et la date via Supabase
@@ -1417,7 +1440,7 @@ app.post("/api/profiles/sync", async (req, res) => {
       let existsInDb = false;
       let dbExistingPassword = "";
       try {
-        const { dataCheck, errorCheck } = await supabaseAdmin
+        const { data: dataCheck, error: errorCheck } = await supabaseAdmin
           .from("profiles")
           .select("email, password")
           .eq("email", email)

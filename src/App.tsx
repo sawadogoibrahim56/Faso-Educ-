@@ -515,8 +515,8 @@ export default function App() {
     } else if (daysLeft === 0) {
       return { text: `-0 jour`, isExpired: true, rawVal: 0 };
     } else {
-      // For both new registered users and expired ones, we mark they remaining days countdown in red with a minus (-) prefix
-      return { text: `-${daysLeft} jour${daysLeft > 1 ? 's' : ''}`, isExpired: false, rawVal: daysLeft };
+      // Ensure active remaining days are denoted positively to prevent confusing the user with negative values
+      return { text: `${daysLeft} jour${daysLeft > 1 ? 's' : ''}`, isExpired: false, rawVal: daysLeft };
     }
   };
 
