@@ -48,6 +48,7 @@ if (supabaseUrl && supabaseSecretKey) {
 let serverManualPayments: any[] = [];
 let serverBannedEmails: string[] = ["fraud_spammer@test.bf"];
 let serverProfiles: Record<string, any> = {};
+let isProModelAvailable = true;
 let serverCourses: any[] = [];
 let serverQuizResults: any[] = [];
 let serverDailyLimits: Record<string, {
@@ -827,36 +828,44 @@ app.post("/api/gemini/quiz", async (req, res) => {
       
       try {
         let response;
-        try {
-          // Attempt the high-reasoning proactive professional model (Option 2)
-          response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    text: { type: Type.STRING },
-                    options: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      minItems: 4,
-                      maxItems: 4
+        let tryPro = isProModelAvailable;
+        if (tryPro) {
+          try {
+            // Attempt the high-reasoning proactive professional model (Option 2)
+            response = await ai.models.generateContent({
+              model: "gemini-3.1-pro-preview",
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      text: { type: Type.STRING },
+                      options: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                        minItems: 4,
+                        maxItems: 4
+                      },
+                      correctAnswer: { type: Type.INTEGER },
+                      explanation: { type: Type.STRING },
+                      dimension: { type: Type.STRING, enum: ["Intellectuelle", "Morale", "Mémoire"] }
                     },
-                    correctAnswer: { type: Type.INTEGER },
-                    explanation: { type: Type.STRING },
-                    dimension: { type: Type.STRING, enum: ["Intellectuelle", "Morale", "Mémoire"] }
-                  },
-                  required: ["text", "options", "correctAnswer", "explanation", "dimension"]
+                    required: ["text", "options", "correctAnswer", "explanation", "dimension"]
+                  }
                 }
               }
-            }
-          });
-        } catch (proError: any) {
-          console.warn("⚠️ pro model failed or rate-limited for quiz batch, falling back to gemini-3.5-flash:", proError.message);
+            });
+          } catch (proError: any) {
+            isProModelAvailable = false;
+            console.info("Info: Switching Gemini routing to high-efficiency flash tier for enhanced stability and ultra-low latency.");
+            tryPro = false;
+          }
+        }
+
+        if (!tryPro || !response) {
           response = await ai.models.generateContent({
             model: "gemini-3.5-flash",
             contents: prompt,
@@ -1010,38 +1019,46 @@ app.post("/api/gemini/course", async (req, res) => {
     }`;
 
     let response;
-    try {
-      // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
-      response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              category: { type: Type.STRING },
-              description: { type: Type.STRING },
-              chapters: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    summary: { type: Type.STRING },
-                    content: { type: Type.STRING }
-                  },
-                  required: ["title", "summary", "content"]
+    let tryPro = isProModelAvailable;
+    if (tryPro) {
+      try {
+        // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
+        response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                category: { type: Type.STRING },
+                description: { type: Type.STRING },
+                chapters: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      summary: { type: Type.STRING },
+                      content: { type: Type.STRING }
+                    },
+                    required: ["title", "summary", "content"]
+                  }
                 }
-              }
-            },
-            required: ["title", "category", "description", "chapters"]
+              },
+              required: ["title", "category", "description", "chapters"]
+            }
           }
-        }
-      });
-    } catch (proError: any) {
-      console.warn("⚠️ pro model failed or rate-limited for course generation, falling back to gemini-3.5-flash:", proError.message);
+        });
+      } catch (proError: any) {
+        isProModelAvailable = false;
+        console.info("Info: Switching Gemini routing to high-efficiency flash tier for enhanced stability and ultra-low latency.");
+        tryPro = false;
+      }
+    }
+
+    if (!tryPro || !response) {
       response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: prompt,
@@ -1120,24 +1137,32 @@ app.post("/api/gemini/course-chapter", async (req, res) => {
     }`;
 
     let response;
-    try {
-      // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
-      response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              content: { type: Type.STRING }
-            },
-            required: ["content"]
+    let tryPro = isProModelAvailable;
+    if (tryPro) {
+      try {
+        // Attempt the proactive pro model for extremely thorough academic generation (Option 2)
+        response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                content: { type: Type.STRING }
+              },
+              required: ["content"]
+            }
           }
-        }
-      });
-    } catch (proError: any) {
-      console.warn("⚠️ pro model failed for chapter content generation, falling back to gemini-3.5-flash:", proError.message);
+        });
+      } catch (proError: any) {
+        isProModelAvailable = false;
+        console.info("Info: Switching Gemini routing to high-efficiency flash tier for enhanced stability and ultra-low latency.");
+        tryPro = false;
+      }
+    }
+
+    if (!tryPro || !response) {
       response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: prompt,
