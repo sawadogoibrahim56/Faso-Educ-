@@ -21,19 +21,37 @@ export function getApiUrl(path: string): string {
   // Safe checks in browser contexts to connect frontend and backend correctly
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
 
     // 1. If running on the Render Frontend domain, send all API requests to the Render Backend domain
     if (hostname.includes('faso-educ-frontend.onrender.com')) {
       return `https://faso-educ-backend.onrender.com${cleanPath}`;
     }
 
-    // 2. If running inside local or containerized visual sandboxes (like AI Studio previews on run.app),
+    // 2. Detect hybrid/native contexts (Capacitor, Cordova, WebView, local file system)
+    const isLocalProtocol = protocol === 'file:' || protocol.startsWith('capacitor') || protocol.startsWith('chrome-extension') || protocol.startsWith('app');
+    const isDev = meta.env?.DEV;
+
+    if (isLocalProtocol) {
+      return `https://faso-educ-backend.onrender.com${cleanPath}`;
+    }
+
+    // 3. If running inside local or containerized visual sandboxes (like AI Studio previews on run.app),
     // we use a relative path. The container router handles routing to the integrated backend.
-    if (hostname.includes('run.app') || hostname === 'localhost' || hostname === '127.0.0.1') {
+    if (hostname.includes('run.app')) {
       return cleanPath;
     }
 
-    // 3. Fallback for any other custom static site domains to direct to the production backend
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      // In production builds (e.g. built stand-alone or wrapped in an APK running on localhost),
+      // we must redirect to the active production backend. In local development mode, we use relative.
+      if (!isDev) {
+        return `https://faso-educ-backend.onrender.com${cleanPath}`;
+      }
+      return cleanPath;
+    }
+
+    // 4. Fallback for any other custom static site domains to direct to the production backend
     return `https://faso-educ-backend.onrender.com${cleanPath}`;
   }
 
