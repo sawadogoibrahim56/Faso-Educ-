@@ -264,41 +264,54 @@ export default function App() {
     async function initFullStackEngine() {
       try {
         setBackendSyncStatus('syncing');
+        
         // A. Load Supabase configuration if returned by Express backend
-        const configRes = await fetch(getApiUrl('/api/supabase-config'));
-        if (configRes.ok && isActive) {
-          const config = await configRes.json();
-          if (config.supabaseUrl && config.supabaseAnonKey) {
-            const { initSupabaseClient } = await import('./lib/supabase');
-            initSupabaseClient(config.supabaseUrl, config.supabaseAnonKey);
-            console.log("⚡ Supabase Dynamic connection ready via backend environment.");
+        try {
+          const configRes = await fetch(getApiUrl('/api/supabase-config'));
+          if (configRes.ok && isActive) {
+            const config = await configRes.json();
+            if (config.supabaseUrl && config.supabaseAnonKey) {
+              const { initSupabaseClient } = await import('./lib/supabase');
+              initSupabaseClient(config.supabaseUrl, config.supabaseAnonKey);
+              console.log("⚡ Supabase Dynamic connection ready via backend environment.");
+            }
           }
+        } catch (e) {
+          console.warn("Offline or backend unreachable for Supabase config:", e);
         }
 
         // B. Fetch server-side banned list
-        const banRes = await fetch(getApiUrl('/api/users/banned'));
-        if (banRes.ok && isActive) {
-          const banData = await banRes.json();
-          if (Array.isArray(banData.bannedEmails)) {
-            setBannedEmails(banData.bannedEmails);
-            const cleanUserEmail = (profile.email || "").trim().toLowerCase();
-            if (cleanUserEmail && banData.bannedEmails.includes(cleanUserEmail)) {
-              alert("❌ Ce compte est suspendu par l'administration.");
-              localStorage.removeItem('faso_educ_jwt_token');
-              localStorage.removeItem('faso_educ_user_profile');
-              setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
-              return;
+        try {
+          const banRes = await fetch(getApiUrl('/api/users/banned'));
+          if (banRes.ok && isActive) {
+            const banData = await banRes.json();
+            if (Array.isArray(banData.bannedEmails)) {
+              setBannedEmails(banData.bannedEmails);
+              const cleanUserEmail = (profile.email || "").trim().toLowerCase();
+              if (cleanUserEmail && banData.bannedEmails.includes(cleanUserEmail)) {
+                alert("❌ Ce compte est suspendu par l'administration.");
+                localStorage.removeItem('faso_educ_jwt_token');
+                localStorage.removeItem('faso_educ_user_profile');
+                setProfile({ registered: false, name: '', email: '', level: 'Licence', registrationDate: '' });
+                return;
+              }
             }
           }
+        } catch (e) {
+          console.warn("Offline or backend unreachable for banned list:", e);
         }
 
         // C. Fetch server-side payments to synchronize across Render clients
-        const payRes = await fetch(getApiUrl('/api/payments'));
-        if (payRes.ok && isActive) {
-          const payData = await payRes.json();
-          if (Array.isArray(payData) && payData.length > 0) {
-            setManualPayments(payData);
+        try {
+          const payRes = await fetch(getApiUrl('/api/payments'));
+          if (payRes.ok && isActive) {
+            const payData = await payRes.json();
+            if (Array.isArray(payData) && payData.length > 0) {
+              setManualPayments(payData);
+            }
           }
+        } catch (e) {
+          console.warn("Offline or backend unreachable for payments list:", e);
         }
 
         // D. Fetch hidden payment operational parameters routing details
@@ -309,7 +322,7 @@ export default function App() {
             setPaymentCredentials(credsData);
           }
         } catch (e) {
-          console.warn("Could not retrieve server-side payment credentials from parameters.");
+          console.warn("Could not retrieve server-side payment credentials from parameters:", e);
         }
 
         // E. JWS durable session check
@@ -348,12 +361,17 @@ export default function App() {
           }
         }
 
+        // Fallback to local profile if offline or token-sync failed
         if (!activeEmail) {
           const localProf = localStorage.getItem('faso_educ_user_profile');
           if (localProf) {
             try {
               const parsed = JSON.parse(localProf);
-              if (parsed.email) activeEmail = parsed.email;
+              if (parsed && parsed.email) {
+                activeEmail = parsed.email;
+                setProfile(parsed);
+                console.log("📂 Loaded offline user profile from localStorage:", activeEmail);
+              }
             } catch (e) { /* ignore */ }
           }
         }
@@ -369,7 +387,7 @@ export default function App() {
               }
             }
           } catch (e) {
-            console.warn("Could not retrieve synchronized courses list:", e);
+            console.warn("Could not retrieve synchronized courses list (using local storage):", e);
           }
 
           try {
@@ -381,7 +399,7 @@ export default function App() {
               }
             }
           } catch (e) {
-            console.warn("Could not retrieve synchronized quiz results history:", e);
+            console.warn("Could not retrieve synchronized quiz results history (using local storage):", e);
           }
         }
 
