@@ -24,6 +24,7 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+          cache: 'gradle' # Speeds up builds by caching gradle downloads
 
       - name: Setup Node.js Environment
         uses: actions/setup-node@v4
@@ -40,24 +41,61 @@ jobs:
           NODE_ENV: production
           VITE_API_URL: https://faso-educ-backend.onrender.com
 
-      - name: Sync Web Application with Capacitor Android
-        run: npx cap sync android
+      - name: Ensure Capacitor Configurations & Sync (On-The-Fly Restoration)
+        run: |
+          # Check if capacitor.config.json exists, if not recreate a default one
+          if [ ! -f "capacitor.config.json" ]; then
+            echo '{"appId":"com.fasoeduc.app","appName":"Faso Educ","webDir":"dist","server":{"androidScheme":"https"}}' > capacitor.config.json
+            echo "⚠️ Re-created missing capacitor.config.json"
+          fi
 
-      - name: Grant Execute Permission to Gradle Wrapper
-        run: chmod +x android/gradlew
+          # Install capacitor packages if they are somehow missing
+          npm install @capacitor/core @capacitor/cli @capacitor/android --no-audit --no-fund
+
+          # Check if the android platform folder is missing and restore it dynamically
+          if [ ! -d "android" ]; then
+            echo "⚠️ Android native directory not found in repository. Restoring on-the-fly..."
+            npx cap add android
+          else
+            echo "✅ Android native directory found. Proceeding with sync..."
+          fi
+
+          # Sync the compiled web application (dist/) with the native Android wrapper
+          npx cap sync android
+
+      - name: Auto-Accept Android SDK Licenses
+        run: |
+          echo "y" | sdkmanager --licenses || true
+
+      - name: Ensure Executable Gradle Wrapper
+        run: |
+          if [ -f android/gradlew ]; then
+            chmod +x android/gradlew
+            echo "✅ Gradle wrapper permissions set."
+          else
+            echo "❌ Error: android/gradlew not found!"
+            exit 1
+          fi
 
       - name: Build Android APK (Installable Debug APK)
         run: |
           cd android
-          ./gradlew assembleDebug
+          # Run the build using Gradle with build-cache enabled for extreme reliability
+          ./gradlew assembleDebug --no-daemon --build-cache
 
-      - name: Locate and Prepare APK
+      - name: Locate and Secure Built APK
         run: |
           mkdir -p build-artifacts
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-artifacts/faso-educ-debug.apk
-          echo "APK successfully compiled and copied to build-artifacts/"
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            cp "$APK_PATH" build-artifacts/faso-educ-debug.apk
+            echo "✅ Android APK successfully compiled and prepared in build-artifacts/ !"
+          else
+            echo "❌ CRITICAL ERROR: Compilation succeeded but APK binary was not found at expected path: $APK_PATH"
+            exit 1
+          fi
 
-      - name: Upload Installable Android APK
+      - name: Upload Highly Optimized Android APK
         uses: actions/upload-artifact@v4
         with:
           name: faso-educ-android-apk
