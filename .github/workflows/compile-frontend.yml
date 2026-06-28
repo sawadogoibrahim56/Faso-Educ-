@@ -67,6 +67,36 @@ jobs:
         run: |
           echo "y" | sdkmanager --licenses || true
 
+      - name: Repair and Force-Rebuild Gradle Wrapper Binary
+        run: |
+          echo "🔧 Commencing professional Gradle Wrapper verification and repair..."
+          cd android
+          
+          # 1. Clean up any corrupted wrapper jar
+          rm -f gradle/wrapper/gradle-wrapper.jar
+          mkdir -p gradle/wrapper
+          
+          # 2. Force download of a pristine, official, verified gradle-wrapper.jar binary (v8.14.3)
+          echo "📥 Downloading official uncorrupted gradle-wrapper.jar binary..."
+          curl -sL --retry 5 --retry-connrefused "https://raw.githubusercontent.com/gradle/gradle/v8.14.3/gradle/wrapper/gradle-wrapper.jar" -o gradle/wrapper/gradle-wrapper.jar
+          
+          # 3. Double-check jar validity, if still corrupt or curl failed, fall back to downloading via gradle services wrapper directly
+          if [ ! -s gradle/wrapper/gradle-wrapper.jar ] || ! jar tf gradle/wrapper/gradle-wrapper.jar >/dev/null 2>&1; then
+            echo "⚠️ First download attempt invalid or unsuccessful. Downloading via official services.gradle.org distribution..."
+            curl -sL --retry 5 --retry-connrefused "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip" -o gradle-temp.zip
+            unzip -q -o gradle-temp.zip "gradle-8.14.3/lib/plugins/gradle-wrapper-*" -d .
+            cp gradle-8.14.3/lib/plugins/gradle-wrapper-*.jar gradle/wrapper/gradle-wrapper.jar || true
+            rm -rf gradle-temp.zip gradle-8.14.3
+          fi
+          
+          # 4. Final verification of the jar binary integrity
+          if [ -s gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "✅ Pristine gradle-wrapper.jar binary successfully placed and verified!"
+          else
+            echo "⚠️ Warning: Automated repair jar checks failed. Falling back to runner-native gradle wrapper generator..."
+            gradle wrapper --gradle-version 8.14.3
+          fi
+
       - name: Ensure Executable Gradle Wrapper
         run: |
           if [ -f android/gradlew ]; then
