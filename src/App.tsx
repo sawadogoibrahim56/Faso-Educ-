@@ -50,6 +50,7 @@ import { precompiledForum } from './data/precompiledForum';
 import { MathRenderer } from './components/MathRenderer';
 import { CompetitionArena } from './components/CompetitionArena';
 import { FileText, Sparkles, BookOpenCheck, RefreshCw, MessageSquare, ThumbsUp, Eye, Send, Pin, CreditCard, ShieldAlert, BadgeCheck, Bell, Info, Copy } from 'lucide-react';
+import UpdateNotifier from './components/UpdateNotifier';
 
 // --- Components ---
 
@@ -7753,6 +7754,9 @@ CREATE TABLE IF NOT EXISTS public.quiz_results (
 
       {/* Admin management modal */}
       {showAdminModal && renderAdminModal()}
+
+      {/* Automatic Update Dialog reminder */}
+      <UpdateNotifier />
     </div>
   );
 }

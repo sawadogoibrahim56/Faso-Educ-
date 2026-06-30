@@ -2768,6 +2768,10 @@ app.post("/api/admin/login", (req, res) => {
 import authRouter from "./src/server/routes/auth.routes";
 app.use("/api/auth", authRouter);
 
+// B.4. Automatic Mobile App Update Check Engine
+import updateRouter from "./src/server/routes/update.routes";
+app.use("/api/version", updateRouter);
+
 
 // C. Dynamic Courses syncing & Community/Public directory sharing
 app.get("/api/courses", async (req, res) => {

@@ -14,6 +14,8 @@ on:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -113,6 +115,17 @@ jobs:
           # Run the build using Gradle with build-cache enabled for extreme reliability
           ./gradlew assembleDebug --no-daemon --build-cache
 
+      - name: Calculate App Version
+        id: app_version
+        run: |
+          VERSION_BASE=$(grep "versionName" android/app/build.gradle | head -n 1 | sed 's/[^0-9.]*//g')
+          if [ -z "$VERSION_BASE" ]; then
+            VERSION_BASE="1.0"
+          fi
+          FULL_VERSION="${VERSION_BASE}.${{ github.run_number }}"
+          echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
+          echo "version=$FULL_VERSION" >> $GITHUB_OUTPUT
+
       - name: Locate and Secure Built APK
         run: |
           mkdir -p build-artifacts
@@ -132,3 +145,48 @@ jobs:
           path: build-artifacts/faso-educ-debug.apk
           retention-days: 30
           if-no-files-found: error
+
+      - name: Create or Update GitHub Release
+        id: create_release
+        if: success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ env.FULL_VERSION }}"
+          name: "Faso-Educ v${{ env.FULL_VERSION }}"
+          body: |
+            ### 🚀 Faso-Educ - Nouvelle Version Officielle v${{ env.FULL_VERSION }}
+            
+            Une nouvelle version de votre compagnon d'excellence **Faso-Educ** est disponible !
+            
+            **Détails du build :**
+            - **Version :** `v${{ env.FULL_VERSION }}`
+            - **Commit :** `${{ github.sha }}`
+            - **Branche de compilation :** `${{ github.ref_name }}`
+            - **Date de publication :** ${{ github.event.head_commit.timestamp || 'Inconnue' }}
+            
+            *Téléchargez l'APK ci-dessous pour installer la dernière mise à jour.*
+          draft: false
+          prerelease: false
+          files: |
+            build-artifacts/faso-educ-debug.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Automatic Update Webhook to Render Backend
+        if: success()
+        run: |
+          echo "📣 Preparing to send webhook notification to Render..."
+          echo "🚀 Determined release version: ${{ env.FULL_VERSION }}"
+          
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/v${{ env.FULL_VERSION }}/faso-educ-debug.apk"
+          CHANGELOG="Nouvelle version Faso-Educ v${{ env.FULL_VERSION }} disponible. Téléchargement direct de l'APK officiel depuis les Releases GitHub."
+          
+          curl -X POST "https://faso-educ-backend.onrender.com/api/version/latest" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"version\": \"${{ env.FULL_VERSION }}\",
+              \"downloadUrl\": \"$DOWNLOAD_URL\",
+              \"changelog\": \"$CHANGELOG\",
+              \"forceUpdate\": false,
+              \"secret\": \"faso_educ_webhook_secret_key_2026\"
+            }" || echo "⚠️ Webhook call failed, but build/release succeeded."
+
