@@ -1,4 +1,4 @@
-export type Level = 'Premier cycle' | 'Licence' | 'Master' | 'Doctorat';
+export type Level = 'BPC' | 'Baccalauréat' | 'Premier cycle' | 'Second cycle' | 'Licence' | 'Master' | 'Doctorat';
 export type Difficulty = 'Facile' | 'Moyen' | 'Expert';
 export type QuizMode = 'Entraînement' | 'Test' | 'Concours';
 

@@ -48,6 +48,7 @@ import { getApiUrl } from './lib/api';
 import { precompiledCourses } from './data/precompiledCourses';
 import { precompiledForum } from './data/precompiledForum';
 import { MathRenderer } from './components/MathRenderer';
+import { CourseContentRenderer } from './components/CourseContentRenderer';
 import { CompetitionArena } from './components/CompetitionArena';
 import { FileText, Sparkles, BookOpenCheck, RefreshCw, MessageSquare, ThumbsUp, Eye, Send, Pin, CreditCard, ShieldAlert, BadgeCheck, Bell, Info, Copy } from 'lucide-react';
 import UpdateNotifier from './components/UpdateNotifier';
@@ -2093,12 +2094,8 @@ export default function App() {
               ) : (
                 <>
                   {/* Course Chapter Text Content Renderer */}
-                  <div className="prose prose-blue dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed space-y-4">
-                    {chapter.content.split('\n\n').map((paragraph, pIdx) => (
-                      <p key={pIdx}>
-                        <MathRenderer text={paragraph} />
-                      </p>
-                    ))}
+                  <div className="prose prose-blue dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed">
+                    <CourseContentRenderer content={chapter.content} />
                   </div>
 
                   {/* Chapter-specific QCM trigger button */}
@@ -2270,15 +2267,31 @@ export default function App() {
           )}
         </div>
 
-        {/* Library Filters */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-extrabold text-xl dark:text-white flex items-center gap-2 flex-wrap">
-              <FileText size={20} className="text-faso-green" />
-              Bibliothèque de Cours
-            </h3>
-            <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 font-semibold px-2.5 py-1 rounded-full">{filteredCourses.length} disponibles</span>
+        {/* Library Filters or Empty State */}
+        {allCourses.length === 0 ? (
+          <div className="bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-3xl p-10 text-center max-w-lg mx-auto shadow-sm space-y-4">
+            <div className="mx-auto w-16 h-16 bg-faso-green/10 rounded-full flex items-center justify-center text-faso-green">
+              <Sparkles size={32} />
+            </div>
+            <div className="space-y-2">
+              <h4 className="font-black text-xl dark:text-white">Bienvenue !</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">
+                Quel sujet souhaitez-vous étudier aujourd'hui ?
+              </p>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 max-w-sm mx-auto">
+              Saisissez un sujet de concours ou de cours ci-dessus pour lancer instantanément la génération de votre premier polycopié d'étude.
+            </p>
           </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-xl dark:text-white flex items-center gap-2 flex-wrap">
+                <FileText size={20} className="text-faso-green" />
+                Bibliothèque de Cours
+              </h3>
+              <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 font-semibold px-2.5 py-1 rounded-full">{filteredCourses.length} disponibles</span>
+            </div>
 
           <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none">
             {['Tous', ...Array.from(new Set(allCourses.map(c => c.category)))].map((cat) => (
@@ -2372,6 +2385,7 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
       </div>
     );
   };

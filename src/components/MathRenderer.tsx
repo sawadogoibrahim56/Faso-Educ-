@@ -87,7 +87,17 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text, className }) =
     <span className={className}>
       {parts.map((part, index) => {
         if (part.type === 'text') {
-          return <span key={index}>{part.content}</span>;
+          const textSegments = part.content.split('**');
+          return (
+            <span key={index}>
+              {textSegments.map((seg, segIdx) => {
+                if (segIdx % 2 === 1) {
+                  return <strong key={segIdx} className="font-extrabold text-gray-950 dark:text-white">{seg}</strong>;
+                }
+                return seg;
+              })}
+            </span>
+          );
         }
 
         const isBlock = part.type === 'block-math';
